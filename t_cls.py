@@ -1,5 +1,6 @@
 import tempfile
 from typing import Dict, Iterable, List, Tuple
+import os
 
 import allennlp
 import torch
@@ -152,10 +153,10 @@ def run_training_loop():
     
     return model, dataset_reader
 
-
-TRAIN_PATH = "/home/ryosuke/desktop/allen_practice/imdb/train"
-DEV_PATH = "/home/ryosuke/desktop/allen_practice/imdb/test"
-TEST_PATH = "/home/ryosuke/desktop/allen_practice/imdb/test"
+cur_dir = os.getcwd()
+TRAIN_PATH = cur_dir + "/imdb/train"
+DEV_PATH = cur_dir + "/imdb/test"
+TEST_PATH = cur_dir + "/imdb/test"
 
 # TRAIN_PATH = "/home/ryosuke/desktop/allen_practice/train.tsv"
 # DEV_PATH = "/home/ryosuke/desktop/allen_practice/train.tsv"
