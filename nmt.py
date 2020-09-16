@@ -55,7 +55,11 @@ def read_data(reader: DatasetReader) -> Tuple[Iterable[Instance], Iterable[Insta
 
 def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
     print("Building the vocabulary")
-    return Vocabulary.from_instances(instances)
+    # ret = Vocabulary.from_instances(instances)
+    ret = Vocabulary()
+    ret.set_from_file(filename="/home/ryosuke/desktop/allen_practice/iwslt15/vocab.en", namespace="source_tokens", oov_token="<unk>")
+    ret.set_from_file(filename="/home/ryosuke/desktop/allen_practice/iwslt15/vocab.vi", namespace="target_tokens", oov_token="<unk>")
+    return ret
 
 def build_model(vocab: Vocabulary) -> Model:
     print("Building the model")
@@ -65,12 +69,12 @@ def build_model(vocab: Vocabulary) -> Model:
     bleu = BLEU()
 
     source_text_embedder = BasicTextFieldEmbedder({"source_tokens": Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_s)})
-    encoder = PytorchTransformer(input_dim=embedding_dim, num_layers=6, positional_encoding="sinusoidal")
+    encoder = PytorchTransformer(input_dim=embedding_dim, num_layers=4, positional_encoding="sinusoidal")
 
     
 
     target_text_embedder = Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_t)
-    decoder_net = StackedSelfAttentionDecoderNet(decoding_dim=embedding_dim, target_embedding_dim=embedding_dim, feedforward_hidden_dim=2048, num_layers=6, num_attention_heads=8)
+    decoder_net = StackedSelfAttentionDecoderNet(decoding_dim=embedding_dim, target_embedding_dim=embedding_dim, feedforward_hidden_dim=1024, num_layers=4, num_attention_heads=8)
     decoder = AutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu)
 
     return ComposedSeq2Seq(vocab, source_text_embedder, encoder, decoder)
@@ -97,7 +101,8 @@ def run_training_loop():
 
     vocab = build_vocab(train_data + dev_data)
 
-    print('vocab', vocab.get_index_to_token_vocabulary(namespace="target_tokens"))
+    print('vocab', vocab.get_index_to_token_vocabulary(namespace="source_tokens"))
+    print('vocab', vocab)
 
     model = build_model(vocab)
     model.cuda() if torch.cuda.is_available() else model
@@ -107,37 +112,38 @@ def run_training_loop():
 
     train_loader, dev_loader = build_data_loaders(train_data, dev_data)
 
-    with tempfile.TemporaryDirectory() as serialization_dir:
-        trainer = build_trainer(model, serialization_dir, train_loader, dev_loader)
-        print("Starting training")
-        trainer.train()
-        print("Finished training")
+    # with tempfile.TemporaryDirectory() as serialization_dir:
+    trainer = build_trainer(model, serialization_dir, train_loader, dev_loader)
+    print("Starting training")
+    trainer.train()
+    print("Finished training")
     
     return model, dataset_reader
 
 
-TRAIN_PATH = "/home/ryosuke/desktop/allen_practice/wmt/train"
-DEV_PATH = "/home/ryosuke/desktop/allen_practice/wmt/test"
-TEST_PATH = "/home/ryosuke/desktop/allen_practice/wmt/test"
+TRAIN_PATH = "/home/ryosuke/desktop/allen_practice/iwslt15/train"
+DEV_PATH = "/home/ryosuke/desktop/allen_practice/iwslt15/valid"
+TEST_PATH = "/home/ryosuke/desktop/allen_practice/iwslt15/test"
 
 
-batch_size = 64
-embedding_dim = 512
-num_epoch = 75
-lr = 0.0002
+batch_size = 32
+embedding_dim = 256
+num_epoch = 7500
+lr = 0.00002
 num_labels = 2
-grad_accum = 72
+grad_accum = 144
 weight_decay = 0.0001
 num_serialized_models_to_keep = 3
 grad_norm = 5.0
 patience = 25
 max_len = 20
+serialization_dir = "/home/ryosuke/desktop/allen_practice/checkpoints/" 
 
 
 model, dataset_reader = run_training_loop()
 test_data = dataset_reader.read(TEST_PATH)
 test_data.index_with(model.vocab)
-data_loader = PyTorchDataLoader(test_data, batch_size=2)
+data_loader = PyTorchDataLoader(test_data, batch_size=32)
 
 
 results = evaluate(model, data_loader, cuda_device=0)
