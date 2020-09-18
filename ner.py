@@ -1,5 +1,6 @@
 import tempfile
 from typing import Dict, Iterable, List, Tuple
+import os
 
 import allennlp
 import torch
@@ -115,6 +116,11 @@ def run_training_loop():
 TRAIN_PATH = "/home/ryosuke/desktop/allen_practice/conll2003/eng.train"
 DEV_PATH = "/home/ryosuke/desktop/allen_practice/conll2003/eng.testb"
 TEST_PATH = "/home/ryosuke/desktop/allen_practice/conll2003/eng.testb"
+
+cur_dir = os.getcwd()
+TRAIN_PATH = cur_dir + "/conll2003/eng.train"
+DEV_PATH = cur_dir + "/conll2003/eng.testb"
+TEST_PATH = cur_dir + "/conll2003/eng.testb"
 
 """
 BERT fine-tune hyper parameter

@@ -1,5 +1,9 @@
 import tempfile
 from typing import Dict, Iterable, List, Tuple
+import os
+import sys
+
+sys.path.append(os.path.join(os.path.dirname(__file__), '/home/ryosuke/desktop/allen_practice/mymodels'))
 
 import allennlp
 import torch
@@ -21,23 +25,53 @@ from allennlp.predictors import Predictor
 from allennlp.common import JsonDict
 from allennlp.modules.seq2vec_encoders.cnn_encoder import CnnEncoder
 from allennlp.modules.seq2vec_encoders.bert_pooler import BertPooler
+from allennlp.modules.seq2seq_encoders import PytorchTransformer
 
-from transformers import BertTokenizer
+from transformers import BertTokenizer, BertModel
+
+from mymodels.embedding_bert import EmbeddingBertTransformer
+
+import argparse
+
+parser = argparse.ArgumentParser(description='Process some integers.')
+parser.add_argument('--pseudo', action="store_true", 
+                            help='type pseudo, if you want to activate pseudo ensemble')
+args = parser.parse_args()
+
+def freeze(model):
+    for param in model.parameters():
+        param.requires_grad = False
+    return model
+
+"""
+single-ensembleする時は、
+- [unused(0-8)]を使うと擬似タグの代わりにできる
+- torch.randn(9,256) -> torch.nn.init.orthogonal(d) で線形移動ベクトル作れる
+"""
+ 
+num_virtual_models = 9
+#bertid: 1646,1648,1649,1650,1651,1652,1653,1654,1655,
+tags = ["あ", "い", "う", "え", "お", "か", "き", "く", "け"][:num_virtual_models]
+offset = 1646
 
 class ClassificaionTsvReader(DatasetReader):
-    def __init__(self, lazy: bool = False, tokenizer: Tokenizer = None, token_indexers: Dict[str, TokenIndexer] = None, max_tokens: int = None):
+    def __init__(self, lazy: bool = False, tokenizer: Tokenizer = None, token_indexers: Dict[str, TokenIndexer] = None, max_tokens: int = None, pseudo: bool = False if args.pseudo == False else True):
         super().__init__(lazy)
         # self.tokenizer = tokenizer or WhitespaceTokenizer()
         # self.token_indexers = token_indexers or {"tokens":SingleIdTokenIndexer()}
         self.tokenizer = tokenizer or PretrainedTransformerTokenizer("bert-large-uncased")
         self.token_indexers = token_indexers or {"tokens":PretrainedTransformerIndexer("bert-large-uncased")}
         self.max_tokens = max_tokens
+        self.pseudo = pseudo
+        self.tags = tags
     
     def text_to_instance(self, text:str, label:str = None) -> Instance:
         tokens = self.tokenizer.tokenize(text)
+
         if self.max_tokens:
             tokens = tokens[:self.max_tokens]
         text_field = TextField(tokens, self.token_indexers)
+
         fields = {"text":text_field}
         if label:
             fields["label"] = LabelField(label)
@@ -45,28 +79,64 @@ class ClassificaionTsvReader(DatasetReader):
 
     def _read(self, file_path:str) -> Iterable[Instance]:
         with open(file_path, "r") as lines:
-            for line in list(lines)[:100]:
+            for line in list(lines):
                 text, sentiment = line.strip().split("\t")
-                yield self.text_to_instance(text, sentiment)
+                if self.pseudo:
+                    for tag in self.tags:
+                        tagged_text = tag + " " + text
+                        # print(tagged_text)
+                        # exit()
+                        yield self.text_to_instance(tagged_text, sentiment)
+                else:
+                    yield self.text_to_instance(text, sentiment)
 
 
 class SimpleClassifier(Model):
-    def __init__(self, vocab: Vocabulary, embedder: TextFieldEmbedder, encoder: Seq2VecEncoder):
+    def __init__(self, vocab: Vocabulary, embedder: TextFieldEmbedder, encoder: Seq2VecEncoder or Seq2SeqEncoder, bert_as_embed: bool = True, pseudo: bool = False if args.pseudo == False else True):
         super().__init__(vocab)
         self.embedder = embedder
         self.encoder = encoder
-        # num_labels = vocab.get_vocab_size("labels") or 2
         self.classifier = torch.nn.Linear(encoder.get_output_dim(), num_labels)
         self.accuracy = CategoricalAccuracy()
+        self.bert_as_embed = bert_as_embed
+        self.bert = freeze(BertModel.from_pretrained("bert-large-uncased")) if bert_as_embed else None
+        # self.device = next(self.bert.parameters()).device
+        self.vectors = torch.nn.init.orthogonal_(torch.randn(num_virtual_models, 1024, requires_grad = False))
+        self.pseudo = pseudo
+        
 
     def forward(self, text: Dict[str, torch.Tensor], label: torch.Tensor = None) -> Dict[str, torch.Tensor]:
+        device = next(self.bert.parameters()).device
+
+        text["tokens"]["tokens"] = text["tokens"]["token_ids"]
+        del text["tokens"]["token_ids"] 
+        del text["tokens"]["type_ids"]
+        del text["tokens"]["mask"]
+
+        # print(text)
+
+        
+        embedded_text = self.embedder(text)
+        if self.pseudo:
+            vector_ids = text["tokens"]["tokens"][:, 1] - offset
+            # print(vector_ids, self.vectors.shape)
+            vectors = torch.index_select(self.vectors.to(device) , 0, vector_ids).to(device).unsqueeze(1)
+            embedded_text += vectors
 
         mask = util.get_text_field_mask(text)
-        embedded_text = self.embedder(text)
-        encoded_text = self.encoder(embedded_text, mask)
+
+        if self.bert_as_embed:
+            bert = self.bert(text["tokens"]["tokens"])[0]
+            encoded_text = self.encoder(embedded_text, mask, bert)
+        else:
+            encoded_text = self.encoder(embedded_text, mask)
 
         logits = self.classifier(encoded_text)
         probs = torch.nn.functional.softmax(logits, dim=-1)
+
+        if not self.training and self.pseudo:
+            probs = torch.mean(probs, 0)
+
         loss = torch.nn.functional.cross_entropy(logits, label)
         output = {"probs":probs}
 
@@ -78,6 +148,7 @@ class SimpleClassifier(Model):
     
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         return {"accuracy": self.accuracy.get_metric(reset)}
+
          
 
 def build_dataset_reader()  -> DatasetReader:
@@ -100,16 +171,22 @@ def build_model(vocab: Vocabulary) -> Model:
 
     # embedder = BasicTextFieldEmbedder({"tokens": Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size)})
     # encoder = BagOfEmbeddingsEncoder(embedding_dim=embedding_dim)
-    embedder = BasicTextFieldEmbedder({"tokens": PretrainedTransformerEmbedder("bert-large-uncased")})
-    encoder = BertPooler("bert-large-uncased")
-    
     # encoder = CnnEncoder(embedding_dim=embedding_dim, num_filters=3, output_dim=embedding_dim)
+
+    #BERT fine tune
+    # embedder = BasicTextFieldEmbedder({"tokens": PretrainedTransformerEmbedder("bert-large-uncased")})
+    # encoder = BertPooler("bert-large-uncased")
+    # return SimpleClassifier(vocab, embedder, encoder)
+
+    #Embeddin BERT
+    embedder = BasicTextFieldEmbedder({"tokens": Embedding(embedding_dim=1024, num_embeddings=30522)})
+    encoder = EmbeddingBertTransformer(input_dim=1024, num_layers=6, positional_encoding="sinusoidal")
+    return SimpleClassifier(vocab, embedder, encoder, bert_as_embed=True)
     
-    return SimpleClassifier(vocab, embedder, encoder)
 
 def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.utils.data.Dataset) -> Tuple[allennlp.data.PyTorchDataLoader, allennlp.data.PyTorchDataLoader]:
     train_loader = PyTorchDataLoader(train_data, batch_size=batch_size, shuffle=True)
-    dev_loader = PyTorchDataLoader(dev_data, batch_size=batch_size, shuffle=True)
+    dev_loader = PyTorchDataLoader(dev_data, batch_size=num_virtual_models, shuffle=False)
     return train_loader, dev_loader
 
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
@@ -135,7 +212,7 @@ def run_training_loop():
 
     vocab = build_vocab(train_data + dev_data)
 
-
+    print(vocab)
 
     model = build_model(vocab)
     model.cuda() if torch.cuda.is_available() else model
@@ -152,10 +229,10 @@ def run_training_loop():
     
     return model, dataset_reader
 
-
-TRAIN_PATH = "/home/ryosuke/desktop/allen_practice/imdb/train"
-DEV_PATH = "/home/ryosuke/desktop/allen_practice/imdb/test"
-TEST_PATH = "/home/ryosuke/desktop/allen_practice/imdb/test"
+cur_dir = os.getcwd()
+TRAIN_PATH = cur_dir + "/imdb/train"
+DEV_PATH = cur_dir + "/imdb/test"
+TEST_PATH = cur_dir + "/imdb/test"
 
 # TRAIN_PATH = "/home/ryosuke/desktop/allen_practice/train.tsv"
 # DEV_PATH = "/home/ryosuke/desktop/allen_practice/train.tsv"
@@ -168,7 +245,7 @@ lr:2e-5
 batch:32
 """
 
-batch_size = 2
+batch_size = 9
 embedding_dim = 256
 num_epoch = 10
 lr = 0.00002
