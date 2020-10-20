@@ -1,3 +1,4 @@
+#export CUDA_VISIBLE_DEVICES=1
 import tempfile
 from typing import Dict, Iterable, List, Tuple
 import os
@@ -35,6 +36,7 @@ from allennlp_models.generation.models import ComposedSeq2Seq
 from allennlp_models.generation.modules.decoder_nets import StackedSelfAttentionDecoderNet
 from allennlp_models.generation.modules.seq_decoders import AutoRegressiveSeqDecoder
 from allennlp.training.metrics import BLEU, Entropy
+from allennlp.training.learning_rate_schedulers import LinearWithWarmup
 
 
 def build_dataset_reader()  -> DatasetReader:
@@ -57,9 +59,10 @@ def read_data(reader: DatasetReader) -> Tuple[Iterable[Instance], Iterable[Insta
 def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
     print("Building the vocabulary")
     # ret = Vocabulary.from_instances(instances)
-    ret = Vocabulary()
-    ret.set_from_file(filename="/home/ryosuke/desktop/allen_practice/iwslt15/vocab.en", namespace="source_tokens", oov_token="<unk>")
-    ret.set_from_file(filename="/home/ryosuke/desktop/allen_practice/iwslt15/vocab.vi", namespace="target_tokens", oov_token="<unk>")
+    ret = Vocabulary(padding_token = "<pad>", oov_token = "<unk>")
+    # ret = ret.from_instances(instances)
+    ret.set_from_file(filename="/home/ryosuke/desktop/allen_practice/iwslt15/vocab.en",  namespace="source_tokens", oov_token="<unk>")
+    ret.set_from_file(filename="/home/ryosuke/desktop/allen_practice/iwslt15/vocab.vi",  namespace="target_tokens", oov_token="<unk>")
     return ret
 
 def build_model(vocab: Vocabulary) -> Model:
@@ -67,16 +70,17 @@ def build_model(vocab: Vocabulary) -> Model:
     vocab_size_s = vocab.get_vocab_size("source_tokens")
     vocab_size_t = vocab.get_vocab_size("target_tokens")
 
-    bleu = BLEU()
+    bleu = BLEU(exclude_indices = {0,2,3})
 
     source_text_embedder = BasicTextFieldEmbedder({"source_tokens": Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_s)})
-    encoder = PytorchTransformer(input_dim=embedding_dim, num_layers=4, positional_encoding="sinusoidal")
+    encoder = PytorchTransformer(input_dim=embedding_dim, num_layers=6, positional_encoding="sinusoidal")
 
     
 
     target_text_embedder = Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_t)
-    decoder_net = StackedSelfAttentionDecoderNet(decoding_dim=embedding_dim, target_embedding_dim=embedding_dim, feedforward_hidden_dim=1024, num_layers=4, num_attention_heads=8)
-    decoder = AutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu)
+    decoder_net = StackedSelfAttentionDecoderNet(decoding_dim=embedding_dim, target_embedding_dim=embedding_dim, feedforward_hidden_dim=1024, num_layers=6, num_attention_heads=8)
+    decoder_net.decodes_parallel=True
+    decoder = AutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu, scheduled_sampling_ratio=0.0)
 
     return ComposedSeq2Seq(vocab, source_text_embedder, encoder, decoder)
 
@@ -88,11 +92,13 @@ def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.uti
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
     parameters = [[n,p] for n, p in model.named_parameters() if p.requires_grad]
     optimizer = AdamOptimizer(parameters, lr=lr, weight_decay=weight_decay)
+    lr_scheduler = LinearWithWarmup(optimizer, num_epoch, warmup_steps=warmup, num_steps_per_epoch=30)
     trainer = GradientDescentTrainer(model=model, serialization_dir=serialization_dir, data_loader=train_loader, \
                                 validation_data_loader=dev_loader, num_epochs=num_epoch, optimizer=optimizer, \
                                 num_gradient_accumulation_steps=grad_accum,
                                 grad_norm=grad_norm, patience=patience)
     return trainer
+
 
 
 
@@ -102,7 +108,7 @@ def run_training_loop():
 
     vocab = build_vocab(train_data + dev_data)
 
-    print('vocab', vocab.get_index_to_token_vocabulary(namespace="source_tokens"))
+    # print('vocab', vocab.get_index_to_token_vocabulary(namespace="source_tokens"))
     print('vocab', vocab)
 
     model = build_model(vocab)
@@ -130,19 +136,28 @@ TRAIN_PATH = "/home/ryosuke/desktop/allen_practice/iwslt15/train"
 DEV_PATH = "/home/ryosuke/desktop/allen_practice/iwslt15/valid"
 TEST_PATH = "/home/ryosuke/desktop/allen_practice/iwslt15/test"
 
+# TRAIN_PATH = "./data_small/small_japanese"
+# DEV_PATH = "./data_small/small_japanese"
+# TEST_PATH = "./data_small/small_japanese"
 
-batch_size = 32
+
+batch_size = 16
 embedding_dim = 256
-num_epoch = 7500
-lr = 0.00002
-num_labels = 2
-grad_accum = 144
-weight_decay = 0.0001
+num_epoch = 200
+lr = 0.001
+# num_labels = 2
+grad_accum = 256
+weight_decay = 0.00001
 num_serialized_models_to_keep = 3
 grad_norm = 5.0
-patience = 25
-max_len = 20
-serialization_dir = "/home/ryosuke/desktop/allen_practice/checkpoints/" 
+patience = None
+max_len = 50
+warmup = 100
+
+import datetime
+now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
+
+serialization_dir = "/home/ryosuke/desktop/allen_practice/checkpoints/nmt_lr_" + str(lr) + "_" + now
 
 
 model, dataset_reader = run_training_loop()

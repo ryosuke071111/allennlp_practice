@@ -35,11 +35,7 @@ import argparse
 
 import random
 
-seed = 42
-random.seed(seed)
-torch.manual_seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(seed)
+
 
 
 parser = argparse.ArgumentParser(description='Process some integers.')
@@ -48,6 +44,14 @@ parser.add_argument('--pseudo', action="store_true",
 parser.add_argument('--seed', type=int, default = 42, 
                             help='type seed number')
 args = parser.parse_args()
+
+seed = args.seed
+random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
+
+print("set random seed to {}".format(seed))
 
 def freeze(model):
     for param in model.parameters():
@@ -163,7 +167,6 @@ class SimpleClassifier(Model):
         output = {"probs":probs}
 
         if label is not None:
-            # print("probs", probs)
             self.accuracy(probs, label)
             output["loss"] = torch.nn.functional.cross_entropy(logits, label)
 
