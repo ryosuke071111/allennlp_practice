@@ -33,9 +33,20 @@ from mymodels.embedding_bert import EmbeddingBertTransformer
 
 import argparse
 
+import random
+
+seed = 42
+random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
+
+
 parser = argparse.ArgumentParser(description='Process some integers.')
 parser.add_argument('--pseudo', action="store_true", 
                             help='type pseudo, if you want to activate pseudo ensemble')
+parser.add_argument('--seed', type=int, default = 42, 
+                            help='type seed number')
 args = parser.parse_args()
 
 def freeze(model):
@@ -45,25 +56,29 @@ def freeze(model):
 
 """
 single-ensembleする時は、
-- [unused(0-8)]を使うと擬似タグの代わりにできる
 - torch.randn(9,256) -> torch.nn.init.orthogonal(d) で線形移動ベクトル作れる
 """
  
-num_virtual_models = 9
-#bertid: 1646,1648,1649,1650,1651,1652,1653,1654,1655,
-tags = ["あ", "い", "う", "え", "お", "か", "き", "く", "け"][:num_virtual_models]
-offset = 1646
+num_virtual_models = 5
+tags = ["[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]", "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]"][:num_virtual_models]
+# offset = 1646
+
+#平仮名を入れてしまうと、pret-rainedの時の文脈が考慮されているはず
 
 class ClassificaionTsvReader(DatasetReader):
     def __init__(self, lazy: bool = False, tokenizer: Tokenizer = None, token_indexers: Dict[str, TokenIndexer] = None, max_tokens: int = None, pseudo: bool = False if args.pseudo == False else True):
         super().__init__(lazy)
         # self.tokenizer = tokenizer or WhitespaceTokenizer()
         # self.token_indexers = token_indexers or {"tokens":SingleIdTokenIndexer()}
-        self.tokenizer = tokenizer or PretrainedTransformerTokenizer("bert-large-uncased")
+        # from collections import defaultdict
+        # ags = defaultdict(list) 
+        ags = {"additional_special_tokens":("[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]" , "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]")}
+        self.tokenizer = tokenizer or PretrainedTransformerTokenizer("bert-large-uncased", tokenizer_kwargs=ags)
         self.token_indexers = token_indexers or {"tokens":PretrainedTransformerIndexer("bert-large-uncased")}
         self.max_tokens = max_tokens
         self.pseudo = pseudo
         self.tags = tags
+
     
     def text_to_instance(self, text:str, label:str = None) -> Instance:
         tokens = self.tokenizer.tokenize(text)
@@ -84,8 +99,6 @@ class ClassificaionTsvReader(DatasetReader):
                 if self.pseudo:
                     for tag in self.tags:
                         tagged_text = tag + " " + text
-                        # print(tagged_text)
-                        # exit()
                         yield self.text_to_instance(tagged_text, sentiment)
                 else:
                     yield self.text_to_instance(text, sentiment)
@@ -94,15 +107,24 @@ class ClassificaionTsvReader(DatasetReader):
 class SimpleClassifier(Model):
     def __init__(self, vocab: Vocabulary, embedder: TextFieldEmbedder, encoder: Seq2VecEncoder or Seq2SeqEncoder, bert_as_embed: bool = True, pseudo: bool = False if args.pseudo == False else True):
         super().__init__(vocab)
+        self.pseudo = pseudo
+
         self.embedder = embedder
         self.encoder = encoder
         self.classifier = torch.nn.Linear(encoder.get_output_dim(), num_labels)
         self.accuracy = CategoricalAccuracy()
         self.bert_as_embed = bert_as_embed
+
         self.bert = freeze(BertModel.from_pretrained("bert-large-uncased")) if bert_as_embed else None
-        # self.device = next(self.bert.parameters()).device
+        if self.pseudo:
+            self.bert.resize_token_embeddings(30522 + num_virtual_models)
+            print("resized bert num_embedding to {}".format(self.bert.vocab_size))
+        self.device = next(self.bert.parameters()).device
         self.vectors = torch.nn.init.orthogonal_(torch.randn(num_virtual_models, 1024, requires_grad = False))
-        self.pseudo = pseudo
+        
+        self.vocab = vocab
+        ags = {"additional_special_tokens":("[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]" , "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]")}
+        self.tokenizer = PretrainedTransformerTokenizer("bert-large-uncased", tokenizer_kwargs=ags)
         
 
     def forward(self, text: Dict[str, torch.Tensor], label: torch.Tensor = None) -> Dict[str, torch.Tensor]:
@@ -113,13 +135,10 @@ class SimpleClassifier(Model):
         del text["tokens"]["type_ids"]
         del text["tokens"]["mask"]
 
-        # print(text)
-
-        
         embedded_text = self.embedder(text)
         if self.pseudo:
+            offset = 30522
             vector_ids = text["tokens"]["tokens"][:, 1] - offset
-            # print(vector_ids, self.vectors.shape)
             vectors = torch.index_select(self.vectors.to(device) , 0, vector_ids).to(device).unsqueeze(1)
             embedded_text += vectors
 
@@ -135,13 +154,17 @@ class SimpleClassifier(Model):
         probs = torch.nn.functional.softmax(logits, dim=-1)
 
         if not self.training and self.pseudo:
-            probs = torch.mean(probs, 0)
+            probs = torch.mean(probs, 0).unsqueeze(0)
+            logits = torch.mean(logits, 0).unsqueeze(0)
+            label = label[0].unsqueeze(0)
+
 
         loss = torch.nn.functional.cross_entropy(logits, label)
         output = {"probs":probs}
 
         if label is not None:
-            self.accuracy(logits, label)
+            # print("probs", probs)
+            self.accuracy(probs, label)
             output["loss"] = torch.nn.functional.cross_entropy(logits, label)
 
         return output
@@ -179,12 +202,13 @@ def build_model(vocab: Vocabulary) -> Model:
     # return SimpleClassifier(vocab, embedder, encoder)
 
     #Embeddin BERT
-    embedder = BasicTextFieldEmbedder({"tokens": Embedding(embedding_dim=1024, num_embeddings=30522)})
+    embedder = BasicTextFieldEmbedder({"tokens": Embedding(embedding_dim=1024, num_embeddings=30522 + num_virtual_models)})
     encoder = EmbeddingBertTransformer(input_dim=1024, num_layers=6, positional_encoding="sinusoidal")
     return SimpleClassifier(vocab, embedder, encoder, bert_as_embed=True)
     
 
 def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.utils.data.Dataset) -> Tuple[allennlp.data.PyTorchDataLoader, allennlp.data.PyTorchDataLoader]:
+
     train_loader = PyTorchDataLoader(train_data, batch_size=batch_size, shuffle=True)
     dev_loader = PyTorchDataLoader(dev_data, batch_size=num_virtual_models, shuffle=False)
     return train_loader, dev_loader
@@ -212,7 +236,6 @@ def run_training_loop():
 
     vocab = build_vocab(train_data + dev_data)
 
-    print(vocab)
 
     model = build_model(vocab)
     model.cuda() if torch.cuda.is_available() else model
@@ -221,11 +244,11 @@ def run_training_loop():
     dev_data.index_with(vocab)
     train_loader, dev_loader = build_data_loaders(train_data, dev_data)
 
-    with tempfile.TemporaryDirectory() as serialization_dir:
-        trainer = build_trainer(model, serialization_dir, train_loader, dev_loader)
-        print("Starting training")
-        trainer.train()
-        print("Finished training")
+    # with tempfile.TemporaryDirectory() as serialization_dir:
+    trainer = build_trainer(model, serialization_dir, train_loader, dev_loader)
+    print("Starting training")
+    trainer.train()
+    print("Finished training")
     
     return model, dataset_reader
 
@@ -245,17 +268,23 @@ lr:2e-5
 batch:32
 """
 
-batch_size = 9
+batch_size = 2
 embedding_dim = 256
 num_epoch = 10
 lr = 0.00002
 num_labels = 2
 grad_accum = 16
 
+import datetime
+now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
+
+serialization_dir = "/home/ryosuke/desktop/allen_practice/checkpoints_clss/lr_" + str(lr) + "_" + now + "seed" + str(seed)
+
+
 model, dataset_reader = run_training_loop()
 test_data = dataset_reader.read(TEST_PATH)
 test_data.index_with(model.vocab)
-data_loader = PyTorchDataLoader(test_data, batch_size=2)
+data_loader = PyTorchDataLoader(test_data, batch_size=batch_size, shuffle=False)
 
 
 results = evaluate(model, data_loader, cuda_device=0)
@@ -271,3 +300,4 @@ print("batch_size:{}, num_epoch:{}, lr:{}, grad_accum:{}".format(batch_size, num
 # output = predictor.predict('This was a monstrous waste of time.')
 # print([(vocab.get_token_from_index(label_id, 'labels'), prob)
 #        for label_id, prob in enumerate(output['probs'])])transformers
+
