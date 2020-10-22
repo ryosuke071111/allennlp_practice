@@ -3,7 +3,7 @@ from typing import Dict, Iterable, List, Tuple
 import os
 import sys
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '/home/ryosuke/desktop/allen_practice/mymodels'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '/home/ryosuke/desktop/allen_practice/custom_allennlp_components'))
 
 import allennlp
 import torch
@@ -29,7 +29,7 @@ from allennlp.modules.seq2seq_encoders import PytorchTransformer
 
 from transformers import BertTokenizer, BertModel
 
-from mymodels.embedding_bert import EmbeddingBertTransformer
+from custom_allennlp_components.custom_models.embedding_bert import EmbeddingBertTransformer
 
 import argparse
 
@@ -77,7 +77,7 @@ class ClassificaionTsvReader(DatasetReader):
         # from collections import defaultdict
         # ags = defaultdict(list) 
         ags = {"additional_special_tokens":("[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]" , "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]")}
-        self.tokenizer = tokenizer or PretrainedTransformerTokenizer("bert-large-uncased", tokenizer_kwargs=ags)
+        self.tokenizer = tokenizer or PretrainedTransformerTokenizer("bert-large-uncased", tokenizer_kwargs=(ags if args.pseudo else {}))
         self.token_indexers = token_indexers or {"tokens":PretrainedTransformerIndexer("bert-large-uncased")}
         self.max_tokens = max_tokens
         self.pseudo = pseudo
@@ -118,22 +118,27 @@ class SimpleClassifier(Model):
         self.classifier = torch.nn.Linear(encoder.get_output_dim(), num_labels)
         self.accuracy = CategoricalAccuracy()
         self.bert_as_embed = bert_as_embed
-
         self.bert = freeze(BertModel.from_pretrained("bert-large-uncased")) if bert_as_embed else None
+        self.device = next(self.bert.parameters()).device
+
+        
+
         if self.pseudo:
             self.bert.resize_token_embeddings(30522 + num_virtual_models)
             print("resized bert num_embedding to {}".format(self.bert.vocab_size))
-        self.device = next(self.bert.parameters()).device
-        self.vectors = torch.nn.init.orthogonal_(torch.randn(num_virtual_models, 1024, requires_grad = False))
-        
+            self.vectors = torch.nn.init.orthogonal_(torch.randn(num_virtual_models, 1024, requires_grad = False))
+            ags = {"additional_special_tokens":("[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]" , "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]")}
+            self.tokenizer = PretrainedTransformerTokenizer("bert-large-uncased", tokenizer_kwargs=ags)
+
         self.vocab = vocab
-        ags = {"additional_special_tokens":("[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]" , "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]")}
-        self.tokenizer = PretrainedTransformerTokenizer("bert-large-uncased", tokenizer_kwargs=ags)
+        
+        
         
 
     def forward(self, text: Dict[str, torch.Tensor], label: torch.Tensor = None) -> Dict[str, torch.Tensor]:
         device = next(self.bert.parameters()).device
 
+        # if self.pseudo:
         text["tokens"]["tokens"] = text["tokens"]["token_ids"]
         del text["tokens"]["token_ids"] 
         del text["tokens"]["type_ids"]
@@ -142,6 +147,10 @@ class SimpleClassifier(Model):
         embedded_text = self.embedder(text)
         if self.pseudo:
             offset = 30522
+            vector_ids = text["tokens"]["tokens"][:, 1] - offset
+            print(text["tokens"]["tokens"][:,1])
+            # print(text["tokens"]["tokens"][:,1] -offset)
+            # exit()
             vector_ids = text["tokens"]["tokens"][:, 1] - offset
             vectors = torch.index_select(self.vectors.to(device) , 0, vector_ids).to(device).unsqueeze(1)
             embedded_text += vectors
@@ -208,7 +217,7 @@ def build_model(vocab: Vocabulary) -> Model:
     embedder = BasicTextFieldEmbedder({"tokens": Embedding(embedding_dim=1024, num_embeddings=30522 + num_virtual_models)})
     encoder = EmbeddingBertTransformer(input_dim=1024, num_layers=6, positional_encoding="sinusoidal")
     return SimpleClassifier(vocab, embedder, encoder, bert_as_embed=True)
-    
+
 
 def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.utils.data.Dataset) -> Tuple[allennlp.data.PyTorchDataLoader, allennlp.data.PyTorchDataLoader]:
 
@@ -232,12 +241,17 @@ class SentenceClassifierPredictor(Predictor):
         return self._dataset_reader.text_to_instance(sentence)
 
 
-
 def run_training_loop():
     dataset_reader = build_dataset_reader()
     train_data, dev_data = read_data(dataset_reader)
 
     vocab = build_vocab(train_data + dev_data)
+
+    if not os.path.exists(vocab_dir):
+        vocab.save_to_files("./")
+    else:
+        raise Exception("vocabulary serialization directory %s is not empty", vocab_dir)
+        exit()
 
 
     model = build_model(vocab)
@@ -281,8 +295,8 @@ grad_accum = 16
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
-serialization_dir = "/home/ryosuke/desktop/allen_practice/checkpoints_clss/lr_" + str(lr) + "_" + now + "seed" + str(seed)
-
+serialization_dir = "/home/ryosuke/desktop/allen_practice/checkpoints_clss/lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo")
+vocab_dir = serialization_dir + "/vocab"
 
 model, dataset_reader = run_training_loop()
 test_data = dataset_reader.read(TEST_PATH)
