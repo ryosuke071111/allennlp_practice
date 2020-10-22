@@ -47,8 +47,11 @@ def build_dataset_reader()  -> DatasetReader:
     source_token_indexers = {"source_tokens":SingleIdTokenIndexer(namespace="source_tokens", lowercase_tokens=True)}
     target_token_indexers = {"target_tokens":SingleIdTokenIndexer(namespace="target_tokens", lowercase_tokens=True)}
 
-    return Seq2SeqDatasetReader(source_tokenizer=source_tokenizer, target_tokenizer=target_tokenizer, \
-            source_token_indexers=source_token_indexers, target_token_indexers=target_token_indexers, target_max_tokens=max_len)
+    return Seq2SeqDatasetReader(source_tokenizer=source_tokenizer, \
+                                target_tokenizer=target_tokenizer, \
+                                source_token_indexers=source_token_indexers, \
+                                target_token_indexers=target_token_indexers, \
+                                target_max_tokens=max_len)
 
 def read_data(reader: DatasetReader) -> Tuple[Iterable[Instance], Iterable[Instance]]:
     print("Reading data")
@@ -61,8 +64,8 @@ def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
     # ret = Vocabulary.from_instances(instances)
     ret = Vocabulary(padding_token = "<pad>", oov_token = "<unk>")
     # ret = ret.from_instances(instances)
-    ret.set_from_file(filename="/home/ryosuke/desktop/allen_practice/iwslt15/vocab.en",  namespace="source_tokens", oov_token="<unk>")
-    ret.set_from_file(filename="/home/ryosuke/desktop/allen_practice/iwslt15/vocab.vi",  namespace="target_tokens", oov_token="<unk>")
+    ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens", oov_token="<unk>")
+    ret.set_from_file(filename="./iwslt15/vocab.vi",  namespace="target_tokens", oov_token="<unk>")
     return ret
 
 def build_model(vocab: Vocabulary) -> Model:
@@ -96,7 +99,7 @@ def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchData
     trainer = GradientDescentTrainer(model=model, serialization_dir=serialization_dir, data_loader=train_loader, \
                                 validation_data_loader=dev_loader, num_epochs=num_epoch, optimizer=optimizer, \
                                 num_gradient_accumulation_steps=grad_accum,
-                                grad_norm=grad_norm, patience=patience)
+                                grad_norm=grad_norm, patience=patience, learning_rate_scheduler=lr_scheduler)
     return trainer
 
 
@@ -152,7 +155,7 @@ num_serialized_models_to_keep = 3
 grad_norm = 5.0
 patience = None
 max_len = 50
-warmup = 100
+warmup = 500
 
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
