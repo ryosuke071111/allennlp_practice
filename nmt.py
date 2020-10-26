@@ -37,7 +37,11 @@ from allennlp_models.generation.modules.decoder_nets import StackedSelfAttention
 from allennlp_models.generation.modules.seq_decoders import AutoRegressiveSeqDecoder
 from allennlp.training.metrics import BLEU, Entropy
 from allennlp.training.learning_rate_schedulers import LinearWithWarmup
+from allennlp.training.learning_rate_schedulers.learning_rate_scheduler import ReduceOnPlateauLearningRateScheduler
+
 import torch.nn.functional as F
+
+from ensemble import Ensemble
 
 
 def build_dataset_reader()  -> DatasetReader:
@@ -96,7 +100,8 @@ def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.uti
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
     parameters = [[n,p] for n, p in model.named_parameters() if p.requires_grad]
     optimizer = AdamOptimizer(parameters, lr=lr, weight_decay=weight_decay)
-    lr_scheduler = LinearWithWarmup(optimizer, num_epoch, warmup_steps=warmup, num_steps_per_epoch=30)
+    # lr_scheduler = LinearWithWarmup(optimizer, num_epoch, warmup_steps=warmup, num_steps_per_epoch=1550)
+    lr_scheduler = ReduceOnPlateauLearningRateScheduler(optimizer, factor = 0.8, patience = 3, min_lr = 0.000001)
     trainer = GradientDescentTrainer(model=model, serialization_dir=serialization_dir, data_loader=train_loader, \
                                 validation_data_loader=dev_loader, num_epochs=num_epoch, optimizer=optimizer, \
                                 num_gradient_accumulation_steps=grad_accum,
@@ -125,6 +130,9 @@ def run_training_loop():
 
     # with tempfile.TemporaryDirectory() as serialization_dir:
     trainer = build_trainer(model, serialization_dir, train_loader, dev_loader)
+    print("Starting training")
+    trainer.train()
+    print("Finished training")
 
     return model, dataset_reader, trainer
 
@@ -143,51 +151,50 @@ TEST_PATH = "./iwslt15/test"
 
 
 batch_size = 16
-embedding_dim = 256
+embedding_dim = 512
 num_epoch = 200
-lr = 0.001
+lr = 0.0003
 # num_labels = 2
-grad_accum = 256
+grad_accum = 5
 weight_decay = 0.00001
 num_serialized_models_to_keep = 3
 grad_norm = 5.0
 patience = None
 max_len = 50
-warmup = 500
+warmup = 0
 
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
 serialization_dir = "./checkpoints/nmt_lr_" + str(lr) + "_" + now
 
+model, reader, trainer = run_training_loop()
 
-# model1, dataset_reader, trainer = run_training_loop()
-# model2, dataset_reader, trainer = run_training_loop()
-# model3, dataset_reader, trainer = run_training_loop()
+# dataset_reader = build_dataset_reader()
+# train_data, dev_data = read_data(dataset_reader)
+# train_loader, dev_loader = build_data_loaders(train_data, dev_data)
+# vocab = build_vocab(train_data + dev_data)
+# train_data.index_with(vocab)
+# dev_data.index_with(vocab)
 
-dataset_reader = build_dataset_reader()
-train_data, dev_data = read_data(dataset_reader)
-train_loader, dev_loader = build_data_loaders(train_data, dev_data)
-vocab = build_vocab(train_data + dev_data)
-train_data.index_with(vocab)
-dev_data.index_with(vocab)
 
-model1 = build_model(vocab)
 # model1.cuda() if torch.cuda.is_available() else model1
 
-model2 = build_model(vocab)
+
 # model2.cuda() if torch.cuda.is_available() else model2
 
-models = [model1, model2]
+# model1 = build_model(vocab)
+# model2 = build_model(vocab)
+# models = [model1, model2]
+# ensemble = Ensemble(models)
+# for data in train_loader:
+#     # data.to("cuda")
+#     print(ensemble(data["source_tokens"], data["target_tokens"]))
 
 
 
 
 
-
-# print("Starting training")
-# trainer.train()
-# print("Finished training")
 
 # test_data = dataset_reader.read(TEST_PATH)
 # test_data.index_with(model.vocab)
@@ -200,4 +207,3 @@ models = [model1, model2]
 
 
 #----------------------------------------------------------------------
-
