@@ -97,8 +97,8 @@ def build_model(vocab: Vocabulary) -> Model:
     vocab_size_tokens = vocab.get_vocab_size("tokens")
     vocab_size_chars = vocab.get_vocab_size("token_characters")
 
-    embedder = BasicTextFieldEmbedder({"tokens": Embedding(embedding_dim=embedding_dim, pretrained_file="./glove/glove.6B.200d.txt", trainable=True, num_embeddings=vocab_size_tokens, vocab=vocab),\
-                                        "elmo": ElmoTokenEmbedder(weight_file="https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5", do_layer_norm=False, dropout=0.0),\
+    embedder = BasicTextFieldEmbedder({"tokens": Embedding(embedding_dim=embedding_dim, pretrained_file="./glove/glove.6B.200d.txt", trainable=False, num_embeddings=vocab_size_tokens, vocab=vocab),\
+                                        "elmo": ElmoTokenEmbedder(weight_file="https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5", options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json", do_layer_norm=False, dropout=0.0),\
                                         "token_characters":TokenCharactersEncoder(embedding=Embedding(embedding_dim=16, num_embeddings=vocab_size_chars, vocab=vocab), \
                                                                                 encoder=CnnEncoder(embedding_dim=16, num_filters=128, ngram_filter_sizes=[3]))})
     encoder = PytorchTransformer(input_dim=1352, num_layers=6, positional_encoding="sinusoidal")
@@ -179,7 +179,7 @@ TEST_PATH =  "./conll2003/eng.testb"
 batch_size = 2
 embedding_dim = 200
 num_epoch = 75
-lr = 0.00002
+lr = 0.0001
 num_labels = 2
 grad_accum = 16
 weight_decay = 0.0001
