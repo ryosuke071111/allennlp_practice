@@ -42,6 +42,12 @@ from custom_allennlp_components.custom_dataset_reader.conll2003_inflated import 
 from custom_allennlp_components.custom_models.pseudo_crf_tagger import PseudoCrfTagger
 
 
+"""
+/home/ryosuke/anaconda3/envs/allennlp/lib/python3.7/site-packages/allennlp/data/dataset_readers/dataset_utils
+の InvalidSequenceを消す。
+"""
+
+
 import argparse
 import random
 #

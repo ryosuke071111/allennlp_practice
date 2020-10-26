@@ -37,6 +37,7 @@ from allennlp_models.generation.modules.decoder_nets import StackedSelfAttention
 from allennlp_models.generation.modules.seq_decoders import AutoRegressiveSeqDecoder
 from allennlp.training.metrics import BLEU, Entropy
 from allennlp.training.learning_rate_schedulers import LinearWithWarmup
+import torch.nn.functional as F
 
 
 def build_dataset_reader()  -> DatasetReader:
@@ -112,7 +113,7 @@ def run_training_loop():
     vocab = build_vocab(train_data + dev_data)
 
     # print('vocab', vocab.get_index_to_token_vocabulary(namespace="source_tokens"))
-    print('vocab', vocab)
+    # print('vocab', vocab)
 
     model = build_model(vocab)
     model.cuda() if torch.cuda.is_available() else model
@@ -124,20 +125,17 @@ def run_training_loop():
 
     # with tempfile.TemporaryDirectory() as serialization_dir:
     trainer = build_trainer(model, serialization_dir, train_loader, dev_loader)
-    print("Starting training")
-    trainer.train()
-    print("Finished training")
-    
-    return model, dataset_reader
+
+    return model, dataset_reader, trainer
 
 cur_dir = os.getcwd()
 TRAIN_PATH = cur_dir + "/wmt/train"
 DEV_PATH = cur_dir + "/wmt/test"
 TEST_PATH = cur_dir + "/wmt/test"
 
-TRAIN_PATH = "/home/ryosuke/desktop/allen_practice/iwslt15/train"
-DEV_PATH = "/home/ryosuke/desktop/allen_practice/iwslt15/valid"
-TEST_PATH = "/home/ryosuke/desktop/allen_practice/iwslt15/test"
+TRAIN_PATH = "./iwslt15/train"
+DEV_PATH = "./iwslt15/valid"
+TEST_PATH = "./iwslt15/test"
 
 # TRAIN_PATH = "./data_small/small_japanese"
 # DEV_PATH = "./data_small/small_japanese"
@@ -160,15 +158,46 @@ warmup = 500
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
-serialization_dir = "/home/ryosuke/desktop/allen_practice/checkpoints/nmt_lr_" + str(lr) + "_" + now
+serialization_dir = "./checkpoints/nmt_lr_" + str(lr) + "_" + now
 
 
-model, dataset_reader = run_training_loop()
-test_data = dataset_reader.read(TEST_PATH)
-test_data.index_with(model.vocab)
-data_loader = PyTorchDataLoader(test_data, batch_size=32)
+# model1, dataset_reader, trainer = run_training_loop()
+# model2, dataset_reader, trainer = run_training_loop()
+# model3, dataset_reader, trainer = run_training_loop()
+
+dataset_reader = build_dataset_reader()
+train_data, dev_data = read_data(dataset_reader)
+train_loader, dev_loader = build_data_loaders(train_data, dev_data)
+vocab = build_vocab(train_data + dev_data)
+train_data.index_with(vocab)
+dev_data.index_with(vocab)
+
+model1 = build_model(vocab)
+# model1.cuda() if torch.cuda.is_available() else model1
+
+model2 = build_model(vocab)
+# model2.cuda() if torch.cuda.is_available() else model2
+
+models = [model1, model2]
 
 
-results = evaluate(model, data_loader, cuda_device=0)
-print(results)
-print("batch_size:{}, num_epoch:{}, lr:{}, grad_accum:{}".format(batch_size, num_epoch, lr, grad_accum))
+
+
+
+
+# print("Starting training")
+# trainer.train()
+# print("Finished training")
+
+# test_data = dataset_reader.read(TEST_PATH)
+# test_data.index_with(model.vocab)
+# data_loader = PyTorchDataLoader(test_data, batch_size=32)
+
+
+# results = evaluate(model, data_loader, cuda_device=0)
+# print(results)
+# print("batch_size:{}, num_epoch:{}, lr:{}, grad_accum:{}".format(batch_size, num_epoch, lr, grad_accum))
+
+
+#----------------------------------------------------------------------
+

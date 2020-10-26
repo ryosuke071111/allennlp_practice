@@ -63,7 +63,10 @@ single-ensembleする時は、
 - torch.randn(9,256) -> torch.nn.init.orthogonal(d) で線形移動ベクトル作れる
 """
  
-num_virtual_models = 5
+num_virtual_models = (5 if args.pseudo else 0)
+
+print("num_virtual_models {}".format(num_virtual_models))
+
 tags = ["[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]", "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]"][:num_virtual_models]
 # offset = 1646
 
@@ -118,7 +121,11 @@ class SimpleClassifier(Model):
         self.classifier = torch.nn.Linear(encoder.get_output_dim(), num_labels)
         self.accuracy = CategoricalAccuracy()
         self.bert_as_embed = bert_as_embed
-        self.bert = freeze(BertModel.from_pretrained("bert-large-uncased")) if bert_as_embed else None
+        if bert_as_embed:
+            self.bert = freeze(BertModel.from_pretrained("bert-large-uncased"))
+            print("Use bert as embedding")
+        else:
+            self.bert_as_embed = None
         self.device = next(self.bert.parameters()).device
 
         
@@ -222,7 +229,7 @@ def build_model(vocab: Vocabulary) -> Model:
 def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.utils.data.Dataset) -> Tuple[allennlp.data.PyTorchDataLoader, allennlp.data.PyTorchDataLoader]:
 
     train_loader = PyTorchDataLoader(train_data, batch_size=batch_size, shuffle=True)
-    dev_loader = PyTorchDataLoader(dev_data, batch_size=num_virtual_models, shuffle=False)
+    dev_loader = PyTorchDataLoader(dev_data, batch_size=batch_size, shuffle=False)
     return train_loader, dev_loader
 
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
@@ -285,12 +292,12 @@ lr:2e-5
 batch:32
 """
 
-batch_size = 2
+batch_size = 4
 embedding_dim = 256
-num_epoch = 10
+num_epoch = 100
 lr = 0.00002
 num_labels = 2
-grad_accum = 16
+grad_accum = 8
 
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
