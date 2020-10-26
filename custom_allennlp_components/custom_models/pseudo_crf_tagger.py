@@ -23,7 +23,6 @@ import torch.nn.functional as F
 # from allennlp.commands.evaluate import make_pseudo_tags
 
 def voting(matrix):
-    print('mattix', matrix)
     matrix = torch.tensor(matrix).transpose(0,1).tolist()
     matrix = list(map(lambda x:Counter(x).most_common()[0][0],matrix))
     return matrix
@@ -291,10 +290,6 @@ class PseudoCrfTagger(Model):
                 # mask = torch.stack(([mask for i in range(bsz)]),0)    
         
         predicted_tags = [x for x in best_paths]
-
-        print(predicted_tags)
-        print(tags)
-        print()
     
         ## logits ###
         # # if not self.encoder.training:

@@ -80,6 +80,8 @@ class TransformerEncoderLayer(Module):
         src_b = self.self_attn(src, bert, bert, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
 
+        print("src size", src.shape, "bert size", bert.shape)
+
         if self.training:
             p = 0.4
             u = random.uniform(0,1)
@@ -92,6 +94,7 @@ class TransformerEncoderLayer(Module):
 
         src = src + self.dropout1(src2)
         src = self.norm1(src)
+
         src2 = self.linear2(self.dropout(self.activation(self.linear1(src))))
         src = src + self.dropout2(src2)
         src = self.norm2(src)
@@ -242,6 +245,7 @@ class EmbeddingBertTransformer(Seq2SeqEncoder):
         # For some reason the torch transformer expects the shape (sequence, batch, features), not the more
         # familiar (batch, sequence, features), so we have to fix it.
         output = output.permute(1, 0, 2)
+        bert = bert.permute(1, 0, 2)
         # For some other reason, the torch transformer takes the mask backwards.
         mask = ~mask
         output = self._transformer(output, src_key_padding_mask=mask, bert=bert)
