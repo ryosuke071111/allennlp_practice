@@ -80,7 +80,7 @@ class TransformerEncoderLayer(Module):
         src_b = self.self_attn(src, bert, bert, attn_mask=src_mask,
                               key_padding_mask=src_key_padding_mask)[0]
 
-        print("src size", src.shape, "bert size", bert.shape)
+        # print("src size", src.shape, "bert size", bert.shape)
 
         if self.training:
             p = 0.4

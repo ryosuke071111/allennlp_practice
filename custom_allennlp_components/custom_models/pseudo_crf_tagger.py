@@ -213,7 +213,7 @@ class PseudoCrfTagger(Model):
         loss : ``torch.FloatTensor``, optional
             A scalar loss to be optimised. Only computed if gold label ``tags`` are provided.
         """
-        
+        # print("tokens",tokens)
         try:
             # print("tokens", tokens["tokens"])
             index = torch.tensor([self.index_dict[self.vocab.get_token_from_index(i)] for i in tokens["tokens"]["tokens"][:,0].squeeze(0).tolist()]).long().to(tokens["tokens"]["tokens"].device)
@@ -277,16 +277,19 @@ class PseudoCrfTagger(Model):
         # ##voting###
         
         best_paths = self.crf.viterbi_tags(logits, mask)
+
         best_paths = list(map(lambda x:x[0],best_paths))
 
-        if not self.encoder.training:
-            ans = []
-            for i in range(len(best_paths)):
-                ans.append(voting(best_paths))
-            best_paths = ans
+        # print('best_pathj', best_paths)
 
-            logits = torch.stack(([torch.sum(logits,0)/9 for i in range(bsz)]))
-            mask = mask
+        if not self.encoder.training:
+            best_paths = voting(best_paths)
+            logits = torch.sum(logits,0)/9 
+            logits = logits.unsqueeze(0)
+            mask = mask[0,:].unsqueeze(0)
+            tags = tags[0,:].unsqueeze(0)
+
+
                 # mask = torch.stack(([mask for i in range(bsz)]),0)    
         
         predicted_tags = [x for x in best_paths]
@@ -313,10 +316,13 @@ class PseudoCrfTagger(Model):
             # Represent viterbi tags as "class probabilities" that we can
             # feed into the metrics
             class_probabilities = logits * 0.0
-
-
+            # print("class", class_probabilities)
+            
+            if not isinstance(predicted_tags[0], list):
+                predicted_tags = [predicted_tags]
             for i, instance_tags in enumerate(predicted_tags):
-                for j, tag_id in enumerate(instance_tags):
+                for j, tag_id in enumerate([instance_tags]):
+                    print(i, j, tag_id)
                     class_probabilities[i, j, tag_id] = 1
 
 

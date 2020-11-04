@@ -121,12 +121,11 @@ class Conll2003DatasetReader(DatasetReader):
         # random.seed(i+1)
         with open(file_path, "r") as data_file:
             logger.info("Reading instances from lines in file at: %s", file_path)
-
+            data_file = list(data_file)
             # Group into alternative divider / sentence chunks.
             for is_divider, lines in itertools.groupby(data_file, _is_divider):
                 # Ignore the divider chunks, so that `lines` corresponds to the words
                 # of a single sentence.
-                
                     if not is_divider:
                         fields = [line.strip().split() for line in lines]
 
@@ -139,6 +138,7 @@ class Conll2003DatasetReader(DatasetReader):
                         if self.pseudo:
                             for i in range(len(pseudo_tags)):
                                 pseudo_tokens = [pseudo_tags[i]] + tokens_
+
                                 ner_tags_ = ["O"] + ner_tags
 
                                 tokens = [Token(token) for token in pseudo_tokens]

@@ -56,7 +56,9 @@ def build_dataset_reader()  -> DatasetReader:
                                 target_tokenizer=target_tokenizer, \
                                 source_token_indexers=source_token_indexers, \
                                 target_token_indexers=target_token_indexers, \
-                                target_max_tokens=max_len)
+                                target_max_tokens=max_len,
+                                start_symbol = "<s>",
+                                end_symbol = "</s>")
 
 def read_data(reader: DatasetReader) -> Tuple[Iterable[Instance], Iterable[Instance]]:
     print("Reading data")
