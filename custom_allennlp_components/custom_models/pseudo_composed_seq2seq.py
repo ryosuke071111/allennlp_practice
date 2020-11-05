@@ -13,8 +13,8 @@ from allennlp.nn import util, InitializerApplicator
 from allennlp_models.generation.modules.seq_decoders.seq_decoder import SeqDecoder
 
 
-@Model.register("composed_seq2seq")
-class ComposedSeq2Seq(Model):
+@Model.register("pseudocomposed_seq2seq")
+class PseudoComposedSeq2Seq(Model):
     """
     This `ComposedSeq2Seq` class is a `Model` which takes a sequence, encodes it, and then
     uses the encoded representations to decode another sequence.  You can use this as the basis for

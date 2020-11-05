@@ -43,36 +43,68 @@ import torch.nn.functional as F
 
 from ensemble import Ensemble
 
+import sys
+
+cur_dir = os.getcwd()
+sys.path.append(os.path.join(os.path.dirname(__file__), cur_dir + '/custom_allennlp_components'))
+sys.path.append(os.path.join(os.path.dirname(__file__), cur_dir +  "/custom_allennlp_components/custom_dataset_reader"))
+
+from custom_allennlp_components.custom_dataset_reader.conll2003_inflated import Conll2003DatasetReader
+from custom_allennlp_components.custom_dataset_reader.seq2seq_inflated import PseudoSeq2SeqDatasetReader
+from custom_allennlp_components.custom_models.pseudo_crf_tagger import PseudoCrfTagger
+from custom_allennlp_components.custom_models.pseudo_composed_seq2seq import PseudoComposedSeq2Seq
+
+import argparse
+import random
+#
+parser = argparse.ArgumentParser(description='Process some integers.')
+parser.add_argument('--pseudo', action="store_true", 
+                            help='type pseudo, if you want to activate pseudo ensemble')
+parser.add_argument('--seed', type=int, default = 42, 
+                            help='type seed number')
+args = parser.parse_args()
+
+seed = args.seed
+random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(seed)
+
+num_virtual_models = 9
+
+tags = ["[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]", "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]"][:num_virtual_models]
 
 def build_dataset_reader()  -> DatasetReader:
     source_tokenizer = WhitespaceTokenizer()
     target_tokenizer = WhitespaceTokenizer()
 
     # indexers = {"source_tokens":SingleIdTokenIndexer(), "target_tokens":SingleIdTokenIndexer()}
-    source_token_indexers = {"source_tokens":SingleIdTokenIndexer(namespace="source_tokens", lowercase_tokens=True)}
-    target_token_indexers = {"target_tokens":SingleIdTokenIndexer(namespace="target_tokens", lowercase_tokens=True)}
+    source_token_indexers = {"source_tokens":SingleIdTokenIndexer(namespace="source_tokens", lowercase_tokens=False)}
+    target_token_indexers = {"target_tokens":SingleIdTokenIndexer(namespace="target_tokens", lowercase_tokens=False)}
 
-    return Seq2SeqDatasetReader(source_tokenizer=source_tokenizer, \
+    return PseudoSeq2SeqDatasetReader(source_tokenizer=source_tokenizer, \
                                 target_tokenizer=target_tokenizer, \
                                 source_token_indexers=source_token_indexers, \
                                 target_token_indexers=target_token_indexers, \
                                 target_max_tokens=max_len,
-                                start_symbol = "<s>",
-                                end_symbol = "</s>")
+                                # start_symbol = "<s>",
+                                # end_symbol = "</s>",
+                                pseudo = args.pseudo)
 
 def read_data(reader: DatasetReader) -> Tuple[Iterable[Instance], Iterable[Instance]]:
     print("Reading data")
-    training_data = reader.read(TRAIN_PATH)
-    validation_data = reader.read(DEV_PATH)
+    bagging = False if not args.pseudo else True
+    training_data = reader._read(TRAIN_PATH, bagging = bagging)
+    validation_data = reader._read(DEV_PATH)
     return training_data, validation_data
 
 def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
     print("Building the vocabulary")
-    # ret = Vocabulary.from_instances(instances)
-    ret = Vocabulary(padding_token = "<pad>", oov_token = "<unk>")
-    # ret = ret.from_instances(instances)
-    ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens", oov_token="<unk>")
-    ret.set_from_file(filename="./iwslt15/vocab.vi",  namespace="target_tokens", oov_token="<unk>")
+    ret = Vocabulary.from_instances(instances, min_count={'source_tokens': 3, 'target_tokens': 3})
+    # ret = Vocabulary(padding_token = "<pad>", oov_token = "<unk>")
+    # # ret = ret.from_instances(instances)
+    # ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens", oov_token="<unk>")
+    # ret.set_from_file(filename="./iwslt15/vocab.vi",  namespace="target_tokens", oov_token="<unk>")
     return ret
 
 def build_model(vocab: Vocabulary) -> Model:
@@ -89,14 +121,20 @@ def build_model(vocab: Vocabulary) -> Model:
 
     target_text_embedder = Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_t)
     decoder_net = StackedSelfAttentionDecoderNet(decoding_dim=embedding_dim, target_embedding_dim=embedding_dim, feedforward_hidden_dim=1024, num_layers=6, num_attention_heads=8)
-    decoder_net.decodes_parallel=True
-    decoder = AutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu, scheduled_sampling_ratio=0.0)
-
-    return ComposedSeq2Seq(vocab, source_text_embedder, encoder, decoder)
+    # decoder_net.decodes_parallel=True
+    decoder = AutoRegressiveSeqDecoder(
+        vocab, decoder_net, max_len, target_text_embedder, 
+        target_namespace="target_tokens", tensor_based_metric=bleu, 
+        scheduled_sampling_ratio=0.0)
+    
+    if args.pseudo:
+        return PseudoComposedSeq2Seq(vocab, source_text_embedder, encoder, decoder)
+    else:
+        return ComposedSeq2Seq(vocab, source_text_embedder, encoder, decoder)
 
 def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.utils.data.Dataset) -> Tuple[allennlp.data.PyTorchDataLoader, allennlp.data.PyTorchDataLoader]:
     train_loader = PyTorchDataLoader(train_data, batch_size=batch_size, shuffle=True)
-    dev_loader = PyTorchDataLoader(dev_data, batch_size=batch_size, shuffle=True)
+    dev_loader = PyTorchDataLoader(dev_data, batch_size=num_virtual_models, shuffle=False)
     return train_loader, dev_loader
 
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
@@ -153,7 +191,7 @@ TEST_PATH = "./iwslt15/test"
 
 
 batch_size = 16
-embedding_dim = 512
+embedding_dim = 256
 num_epoch = 200
 lr = 0.0003
 # num_labels = 2

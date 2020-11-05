@@ -8,7 +8,7 @@ from overrides import overrides
 from allennlp.common.checks import ConfigurationError
 from allennlp.common.file_utils import cached_path
 from allennlp.common.util import START_SYMBOL, END_SYMBOL
-from allennlp.data.dataset_readers.dataset_reader import DatasetReader
+from allennlp.data.dataset_readers.dataset_reader import DatasetReader, AllennlpDataset
 from allennlp.data.fields import TextField
 from allennlp.data.instance import Instance
 from allennlp.data.tokenizers import Tokenizer, SpacyTokenizer
@@ -21,7 +21,7 @@ import random
 num_virtual_models = 9
 
 @DatasetReader.register("seq2seq_inflated")
-class Seq2SeqDatasetReader(DatasetReader):
+class PseudoSeq2SeqDatasetReader(DatasetReader):
     """
     Read a tsv file containing paired sequences, and create a dataset suitable for a
     `ComposedSeq2Seq` model, or any model with a matching API.
@@ -99,9 +99,12 @@ class Seq2SeqDatasetReader(DatasetReader):
 
     @overrides
     def _read(self, file_path: str, bagging = False):
-        print("Now I added the pseudo tokens to the beginnning of soure!!!! not target!!!!!!")
+        if self.pseudo:
+            print("Now I added the pseudo tokens to the beginnning of soure!!!! not target!!!!!!")
 
         pseudo_tags = ["[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]", "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]"][:num_virtual_models]
+
+        ret = []
 
         # Reset exceeded counts
         self._source_max_exceeded = 0
@@ -132,9 +135,9 @@ class Seq2SeqDatasetReader(DatasetReader):
                         pseudo_source_sequence = pseudo_tags[i] + " " + source_sequence
                         # pseudo_target_sequence = pseudo_tags[i] + " " + target_sequence
                         pseudo_target_sequence = target_sequence
-                        yield self.text_to_instance(pseudo_source_sequence, pseudo_target_sequence)
+                        ret.append(self.text_to_instance(pseudo_source_sequence, pseudo_target_sequence))
                 else:
-                    yield self.text_to_instance(source_sequence, target_sequence)
+                    ret.append(self.text_to_instance(source_sequence, target_sequence))
 
 
         if self._source_max_tokens and self._source_max_exceeded:
@@ -149,6 +152,8 @@ class Seq2SeqDatasetReader(DatasetReader):
                 self._target_max_exceeded,
                 self._target_max_tokens,
             )
+        
+        return AllennlpDataset(ret)
 
     @overrides
     def text_to_instance(

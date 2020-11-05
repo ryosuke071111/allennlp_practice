@@ -519,7 +519,6 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
         else:
             output_dict = {}
 
-
         if not self.training:
             #完成（出力の確率を平均化）
             predictions = self._forward_beam_search(state)
@@ -529,6 +528,7 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
             
 
             if target_tokens:
+                target_tokens = target_tokens["target_tokens"]["tokens"][0,:]
                 targets = util.get_token_ids_from_text_field_tensors(target_tokens)
                 if self._tensor_based_metric is not None:
                     # shape: (batch_size, beam_size, max_sequence_length)
