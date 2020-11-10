@@ -15,15 +15,39 @@ from allennlp.nn.beam_search import BeamSearch
 from allennlp.training.metrics import Metric
 
 from allennlp_models.generation.modules.decoder_nets.decoder_net import DecoderNet
-from .seq_decoder import SeqDecoder
+from allennlp_models.generation.modules.seq_decoders import SeqDecoder
 
 num_virtual_models = 9
 
-START_SYMBOL = "<s>"
-END_SYMBOL = "</s>"
+# START_SYMBOL = "<s>"
+# END_SYMBOL = "</s>"
 
-@SeqDecoder.register("auto_regressive_seq_decoder")
-class AutoRegressiveSeqDecoder(SeqDecoder):
+def reconstruct_sequences(predictions, backpointers):
+    # Reconstruct the sequences.
+    # shape: [(batch_size, beam_size, 1)]
+    reconstructed_predictions = [predictions[-1].unsqueeze(2)]
+
+    # shape: (batch_size, beam_size)
+    cur_backpointers = backpointers[-1]
+
+    for timestep in range(len(predictions) - 2, 0, -1):
+        # shape: (batch_size, beam_size, 1)
+        cur_preds = predictions[timestep].gather(1, cur_backpointers).unsqueeze(2)
+
+        reconstructed_predictions.append(cur_preds)
+
+        # shape: (batch_size, beam_size)
+        cur_backpointers = backpointers[timestep - 1].gather(1, cur_backpointers)
+
+    # shape: (batch_size, beam_size, 1)
+    final_preds = predictions[0].gather(1, cur_backpointers).unsqueeze(2)
+
+    reconstructed_predictions.append(final_preds)
+
+    return reconstructed_predictions
+
+@SeqDecoder.register("pseudo_auto_regressive_seq_decoder")
+class PseudoAutoRegressiveSeqDecoder(SeqDecoder):
     """
     An autoregressive decoder that can be used for most seq2seq tasks.
 
@@ -77,7 +101,8 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
         super().__init__(target_embedder)
 
         self._vocab = vocab
-
+        self.beam_size = beam_size
+        self.max_steps = max_decoding_steps
         # Decodes the sequence of encoded hidden states into e new sequence of hidden states.
         self._decoder_net = decoder_net
         self._max_decoding_steps = max_decoding_steps
@@ -123,10 +148,20 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
         """
         Prepare inputs for the beam search, does beam search and returns beam search results.
         """
-        batch_size = state["source_mask"].size()[0]
-        start_predictions = state["source_mask"].new_full(
-            (batch_size,), fill_value=self._start_index, dtype=torch.long
-        )
+        batch_size = 1
+        states = []
+        for i in range(num_virtual_models):
+            v_model = {}
+            for k, tensor in state.items():
+                v_model[k] = tensor[i,:].unsqueeze(0)
+            states.append(v_model)
+
+        start_predictions = [state["source_mask"].new_full((batch_size,), fill_value=self._start_index, dtype=torch.long) for state in states]
+
+        # start_predictions = state["source_mask"].new_full(
+        #     (batch_size,), fill_value=self._start_index, dtype=torch.long
+        # )
+
 
         from inspect import signature
 
@@ -134,8 +169,32 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
         backpointers: List[torch.Tensor] = []
 
         #配列のstart_predictions, encoder outs仕様にする
-        start_state = state
-        start_class_log_probabilities, states = self.step(start_predictions, start_state)
+        # start_state = state
+        start_state = states
+
+        #--option1
+        # start_class_log_probabilities, states = self.take_step(start_predictions, start_state)
+
+        #--option2
+        # class_log_probabilities, states = self._prepare_output_projections(start_predictions, start_state)
+        # class_log_probabilities = F.softmax(class_log_probabilities, dim=-1)
+        # start_class_log_probabilities = torch.log(sum(class_log_probabilities)/num_virtual_models).unsqueeze(0)
+
+        #--option3
+        new_output_projections = []
+        new_states = []
+
+        for last_prediction, state in zip(start_predictions, states):
+            output_projections, state = self._prepare_output_projections(last_prediction, state)
+            new_output_projections.append(output_projections)
+            new_states.append(state)
+
+        # shape: (group_size, num_classes)
+        class_log_probabilities = [F.softmax(new_output, dim=-1) for new_output in new_output_projections]
+        class_log_probabilities = torch.log(sum(class_log_probabilities)/num_virtual_models)
+        start_class_log_probabilities, states = class_log_probabilities, new_states
+
+        # print("start_class_log_probabilities",start_class_log_probabilities.shape)
 
         num_classes = start_class_log_probabilities.size()[1]
 
@@ -151,32 +210,74 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
         )
         log_probs_after_end[:, self._end_index] = 0.0
 
-        for key, state_tensor in state.items():
-            if state_tensor is None:
-                continue
-            else:
-                # shape: (batch_size * beam_size, *)
-                _, *last_dims = state_tensor.size()
-                state[key] = (
-                    state_tensor.unsqueeze(1)
-                    .expand(batch_size, self.beam_size, *last_dims)
-                    .reshape(batch_size * self.beam_size, *last_dims))
+        for state in states:
+            for key, state_tensor in state.items():
+                if state_tensor is None:
+                    continue
+                else:
+                    # shape: (batch_size * beam_size, *)
+                    _, *last_dims = state_tensor.size()
+                    
+                    state[key] = (
+                        state_tensor.unsqueeze(1)
+                        .expand(batch_size, self.beam_size, *last_dims)
+                        .reshape(batch_size * self.beam_size, *last_dims))
         
-        encoder_outs = state
+        # encoder_outs = state
+        encoder_outs = states
 
-        for timestep in range(self.max_len - 1):
+        for timestep in range(self.max_steps - 1):
             last_predictions = predictions[-1].reshape(batch_size * self.beam_size)
 
             if (last_predictions == self._end_index).all():
                 break
             
             #ensembleのために確率の平均を出す
-            class_log_probabilities = self.take_step(last_predictions, state, timestep + 1)
-            print("平均の確率になった")
+            # class_log_probabilities = self.take_step(last_predictions, state)
+            # print("平均の確率になった")
+
+
+
+            ###------------------batch version
+            # last_predictions = last_predictions.repeat(num_virtual_models)
+
+            # output_projections, state = self._prepare_output_projections(last_predictions, state)
+            # class_log_probabilities = F.softmax(output_projections, dim=-1)
+
+            # exit()
+            
+            # aggregated_probs = None
+            # for j in range(self.beam_size):
+            #         ag_probs_for_beam = torch.log(sum([class_log_probabilities[(self.beam_size*i+j),:] for i in range(num_virtual_models)])/num_virtual_models).unsqueeze(0)
+            #         if aggregated_probs is None:
+            #             aggregated_probs = ag_probs_for_beam
+            #         else:
+            #             aggregated_probs = torch.cat((aggregated_probs, ag_probs_for_beam), 0)
+            
+            # print("aggregated probs", aggregated_probs.shape)
+            # class_log_probabilities = aggregated_probs
+
+            # encoder_outs = state
+            ##------------------
+            next_probs_group = []
+            new_states_group = []
+
+            for state in encoder_outs:
+                next_probs, new_state = self._prepare_output_projections(last_predictions, state)
+                next_probs = F.softmax(next_probs, dim=-1)
+
+                next_probs_group.append(next_probs)
+                new_states_group.append(new_state)
+
+            encoder_outs = new_states_group
+
 
             last_predictions_expanded = last_predictions.unsqueeze(-1).expand(
                 batch_size * self.beam_size, num_classes
             )
+
+            #ensembleのために確率の平均を出す
+            class_log_probabilities = torch.log(sum(next_probs_group)/num_virtual_models)
 
             cleaned_log_probabilities = torch.where(
                 last_predictions_expanded == self._end_index,
@@ -184,16 +285,12 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
                 class_log_probabilities,)
 
             top_log_probabilities, predicted_classes = cleaned_log_probabilities.topk(
-                self.per_node_beam_size
+                self.beam_size
             )
-
-            print("top kが選ばれた")
-            print()
-
             expanded_last_log_probabilities = (
                 last_log_probabilities.unsqueeze(2)
-                .expand(batch_size, self.beam_size, self.per_node_beam_size)
-                .reshape(batch_size * self.beam_size, self.per_node_beam_size)
+                .expand(batch_size, self.beam_size, self.beam_size)
+                .reshape(batch_size * self.beam_size, self.beam_size)
             )
 
             # shape: (batch_size * beam_size, per_node_beam_size)
@@ -201,12 +298,12 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
 
             # shape: (batch_size, beam_size * per_node_beam_size)
             reshaped_summed = summed_top_log_probabilities.reshape(
-                batch_size, self.beam_size * self.per_node_beam_size
+                batch_size, self.beam_size * self.beam_size
             )
 
             # shape: (batch_size, beam_size * per_node_beam_size)
             reshaped_predicted_classes = predicted_classes.reshape(
-                batch_size, self.beam_size * self.per_node_beam_size
+                batch_size, self.beam_size * self.beam_size
             )
 
             restricted_beam_log_probs, restricted_beam_indices = reshaped_summed.topk(
@@ -221,26 +318,27 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
 
             last_log_probabilities = restricted_beam_log_probs
 
-            backpointer = restricted_beam_indices // self.per_node_beam_size
+            backpointer = restricted_beam_indices // self.beam_size
 
             backpointers.append(backpointer)
+            
+            for state in encoder_outs:
+                for key, state_tensor in state.items():
+                    if state_tensor is None:
+                        continue
+                    else:
+                        _, *last_dims = state_tensor.size()
+                        # shape: (batch_size, beam_size, *)
+                        expanded_backpointer = backpointer.view(
+                            batch_size, self.beam_size, *([1] * len(last_dims))
+                        ).expand(batch_size, self.beam_size, *last_dims)
 
-            for key, state_tensor in state.items():
-                if state_tensor is None:
-                    continue
-                else:
-                    _, *last_dims = state_tensor.size()
-                    # shape: (batch_size, beam_size, *)
-                    expanded_backpointer = backpointer.view(
-                        batch_size, self.beam_size, *([1] * len(last_dims))
-                    ).expand(batch_size, self.beam_size, *last_dims)
-
-                    # shape: (batch_size * beam_size, *)
-                    state[key] = (
-                        state_tensor.reshape(batch_size, self.beam_size, *last_dims)
-                        .gather(1, expanded_backpointer)
-                        .reshape(batch_size * self.beam_size, *last_dims)
-                    )
+                        # shape: (batch_size * beam_size, *)
+                        state[key] = (
+                            state_tensor.reshape(batch_size, self.beam_size, *last_dims)
+                            .gather(1, expanded_backpointer)
+                            .reshape(batch_size * self.beam_size, *last_dims)
+                        )
 
         if not torch.isfinite(last_log_probabilities).all():
             print(
@@ -249,7 +347,7 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
                 "probability) transitions that the step function produces.",
             )
 
-        reconstructed_predictions = self.reconstruct_sequences(predictions, backpointers)
+        reconstructed_predictions = reconstruct_sequences(predictions, backpointers)
 
         # shape: (batch_size, beam_size, max_steps)
         all_predictions = torch.cat(list(reversed(reconstructed_predictions)), 2)
@@ -399,19 +497,27 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
         # shape: (group_size, max_input_sequence_length, encoder_output_dim)
         encoder_outputs = state["encoder_outputs"]
 
+
         # shape: (group_size, max_input_sequence_length)
         source_mask = state["source_mask"]
+
 
         # shape: (group_size, steps_count, decoder_output_dim)
         previous_steps_predictions = state.get("previous_steps_predictions")
 
+
         # shape: (batch_size, 1, target_embedding_dim)
+        # last_predictions = last_predictions.unsqueeze(0)
+        # last_predictions = last_predictions.unsqueeze(0).expand(self.beam_size*9, -1).reshape(1,-1)
         last_predictions_embeddings = self.target_embedder(last_predictions).unsqueeze(1)
 
         if previous_steps_predictions is None or previous_steps_predictions.shape[-1] == 0:
             # There is no previous steps, except for start vectors in `last_predictions`
             # shape: (group_size, 1, target_embedding_dim)
+            # exit()
             previous_steps_predictions = last_predictions_embeddings
+
+            
         else:
             # shape: (group_size, steps_count, target_embedding_dim)
             previous_steps_predictions = torch.cat(
@@ -479,12 +585,13 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
         return self._decoder_net.get_output_dim()
 
     def take_step(
-        self, last_predictions: torch.Tensor, state: Dict[str, torch.Tensor], step: int
+        self, last_predictions: torch.Tensor, state: Dict[str, torch.Tensor]
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
 
         output_projections, state = self._prepare_output_projections(last_predictions, state)
+
         class_log_probabilities = F.softmax(output_projections, dim=-1)
-        class_log_probabilities = torch.log(sum(class_log_probabilities)/num_virtual_models)
+        class_log_probabilities = torch.log(sum(class_log_probabilities)/num_virtual_models).unsqueeze(0)
 
         return class_log_probabilities, state
 
@@ -528,7 +635,8 @@ class AutoRegressiveSeqDecoder(SeqDecoder):
             
 
             if target_tokens:
-                target_tokens = target_tokens["target_tokens"]["tokens"][0,:]
+
+                target_tokens["target_tokens"]["tokens"] = target_tokens["target_tokens"]["tokens"][0,:].unsqueeze(0) #target tokensを1つにした
                 targets = util.get_token_ids_from_text_field_tensors(target_tokens)
                 if self._tensor_based_metric is not None:
                     # shape: (batch_size, beam_size, max_sequence_length)

@@ -91,10 +91,12 @@ class PseudoComposedSeq2Seq(Model):
             self._source_text_embedder._token_embedders[
                 tied_source_embedder_key
             ] = self._decoder.target_embedder
-
+        
+        self.num_virtual_models = num_virtual_models
         self.index_dict = {"[pseudo1]":0, "[pseudo2]":1, "[pseudo3]":2, "[pseudo4]":3, "[pseudo5]":4, "[pseudo6]":5, "[pseudo7]":6, "[pseudo8]":7, "[pseudo9]":8}
+
         self.orthogonal_embedding_emb = torch.nn.init.orthogonal_(torch.empty(self.num_virtual_models, source_text_embedder.get_output_dim(),requires_grad=False)).float()
-        self.orthogonal_embedding_hidden = torch.nn.init.orthogonal_(torch.empty(self.num_virtual_models, encoder.get_output_dim(),requires_grad=False)).float()
+        # self.orthogonal_embedding_hidden = torch.nn.init.orthogonal_(torch.empty(self.num_virtual_models, encoder.get_output_dim(),requires_grad=False)).float()
         
         self.vocab = vocab
 
@@ -159,16 +161,19 @@ class PseudoComposedSeq2Seq(Model):
             forward pass on the encoder.
         """
 
+        # print(self.vocab.get_index_to_token_vocabulary(namespace = "source_tokens"))
+        # exit()
+
         try:
             # print("tokens", tokens["tokens"])
-            index = torch.tensor([self.index_dict[self.vocab.get_token_from_index(i)] for i in source_tokens["source_tokens"]["tokens"][:,0].squeeze(0).tolist()]).long().to(source_tokens["source_tokens"]["tokens"].device)
+            index = torch.tensor([self.index_dict[self.vocab.get_token_from_index(i, namespace = "source_tokens")] for i in source_tokens["source_tokens"]["tokens"][:,1].squeeze(0).tolist()]).long().to(source_tokens["source_tokens"]["tokens"].device)
             # print(tokens["tokens"][:,0])
             # exit()
             # index = torch.tensor([self.index_dict[self.vocab.get_token_from_index(i)] for i in tokens["tokens"][:,0].squeeze(0).tolist()]).long().to(tokens["tokens"].device)
         except:
             import sys
             sys.stdout.write("AAA {}".format(sys.exc_info()))
-            index = torch.tensor([self.index_dict[self.vocab.get_token_from_index(i)] for i in source_tokens["source_tokens"]["tokens"][:,0].tolist()]).long().to(source_tokens["source_tokens"]["tokens"].device)
+            index = torch.tensor([self.index_dict[self.vocab.get_token_from_index(i,  namespace = "source_tokens")] for i in source_tokens["source_tokens"]["tokens"][:,1].squeeze(0).tolist()]).long().to(source_tokens["source_tokens"]["tokens"].device)
 
 
         # shape: (batch_size, max_input_sequence_length, encoder_input_dim)
@@ -185,7 +190,7 @@ class PseudoComposedSeq2Seq(Model):
 
         embedded_input += (scale*orthogonal_vecs)
 
-        # shape: (batch_size, max_input_sequence_length)
+        # shape: (batch_size, max_input_sequence_length)()
         source_mask = util.get_text_field_mask(source_tokens)
         # shape: (batch_size, max_input_sequence_length, encoder_output_dim)
         encoder_outputs = self._encoder(embedded_input, source_mask)

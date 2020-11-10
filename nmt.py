@@ -53,6 +53,7 @@ from custom_allennlp_components.custom_dataset_reader.conll2003_inflated import 
 from custom_allennlp_components.custom_dataset_reader.seq2seq_inflated import PseudoSeq2SeqDatasetReader
 from custom_allennlp_components.custom_models.pseudo_crf_tagger import PseudoCrfTagger
 from custom_allennlp_components.custom_models.pseudo_composed_seq2seq import PseudoComposedSeq2Seq
+from custom_allennlp_components.pseudo_auto_regressive import PseudoAutoRegressiveSeqDecoder
 
 import argparse
 import random
@@ -101,6 +102,9 @@ def read_data(reader: DatasetReader) -> Tuple[Iterable[Instance], Iterable[Insta
 def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
     print("Building the vocabulary")
     ret = Vocabulary.from_instances(instances, min_count={'source_tokens': 3, 'target_tokens': 3})
+    print(ret.get_index_to_token_vocabulary(namespace = "source_tokens"))
+    print(ret.get_index_to_token_vocabulary(namespace = "target_tokens"))
+    # exit()
     # ret = Vocabulary(padding_token = "<pad>", oov_token = "<unk>")
     # # ret = ret.from_instances(instances)
     # ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens", oov_token="<unk>")
@@ -111,25 +115,27 @@ def build_model(vocab: Vocabulary) -> Model:
     print("Building the model")
     vocab_size_s = vocab.get_vocab_size("source_tokens")
     vocab_size_t = vocab.get_vocab_size("target_tokens")
-
+    
     bleu = BLEU(exclude_indices = {0,2,3})
 
     source_text_embedder = BasicTextFieldEmbedder({"source_tokens": Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_s)})
-    encoder = PytorchTransformer(input_dim=embedding_dim, num_layers=6, positional_encoding="sinusoidal")
+    encoder = PytorchTransformer(input_dim=embedding_dim, num_layers=num_layers ,positional_encoding="sinusoidal", feedforward_hidden_dim=dff, num_attention_heads=num_head)
 
     
-
+    # target_text_embedder = BasicTextFieldEmbedder({"target_tokens":Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_t)})
     target_text_embedder = Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_t)
-    decoder_net = StackedSelfAttentionDecoderNet(decoding_dim=embedding_dim, target_embedding_dim=embedding_dim, feedforward_hidden_dim=1024, num_layers=6, num_attention_heads=8)
-    # decoder_net.decodes_parallel=True
+    decoder_net = StackedSelfAttentionDecoderNet(decoding_dim=embedding_dim, target_embedding_dim=embedding_dim, feedforward_hidden_dim=dff, num_layers=num_layers, num_attention_heads=num_head)
+    decoder_net.decodes_parallel=True
     decoder = AutoRegressiveSeqDecoder(
         vocab, decoder_net, max_len, target_text_embedder, 
         target_namespace="target_tokens", tensor_based_metric=bleu, 
         scheduled_sampling_ratio=0.0)
     
     if args.pseudo:
-        return PseudoComposedSeq2Seq(vocab, source_text_embedder, encoder, decoder)
+        decoder = PseudoAutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu, scheduled_sampling_ratio=0.0)
+        return PseudoComposedSeq2Seq(vocab, source_text_embedder, encoder, decoder, num_virtual_models = num_virtual_models)
     else:
+        decoder = AutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu, scheduled_sampling_ratio=0.0)
         return ComposedSeq2Seq(vocab, source_text_embedder, encoder, decoder)
 
 def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.utils.data.Dataset) -> Tuple[allennlp.data.PyTorchDataLoader, allennlp.data.PyTorchDataLoader]:
@@ -140,12 +146,18 @@ def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.uti
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
     parameters = [[n,p] for n, p in model.named_parameters() if p.requires_grad]
     optimizer = AdamOptimizer(parameters, lr=lr, weight_decay=weight_decay)
-    # lr_scheduler = LinearWithWarmup(optimizer, num_epoch, warmup_steps=warmup, num_steps_per_epoch=1550)
     lr_scheduler = ReduceOnPlateauLearningRateScheduler(optimizer, factor = 0.8, patience = 3, min_lr = 0.000001)
-    trainer = GradientDescentTrainer(model=model, serialization_dir=serialization_dir, data_loader=train_loader, \
-                                validation_data_loader=dev_loader, num_epochs=num_epoch, optimizer=optimizer, \
-                                num_gradient_accumulation_steps=grad_accum,
-                                grad_norm=grad_norm, patience=patience, learning_rate_scheduler=lr_scheduler)
+    trainer = GradientDescentTrainer(
+        model=model, 
+        serialization_dir=serialization_dir, 
+        data_loader=train_loader, \
+        validation_data_loader=dev_loader, 
+        num_epochs=num_epoch, 
+        optimizer=optimizer, \
+        num_gradient_accumulation_steps=grad_accum,
+        grad_norm=grad_norm, 
+        patience=patience,
+        learning_rate_scheduler=lr_scheduler)
     return trainer
 
 
@@ -156,9 +168,6 @@ def run_training_loop():
     train_data, dev_data = read_data(dataset_reader)
 
     vocab = build_vocab(train_data + dev_data)
-
-    # print('vocab', vocab.get_index_to_token_vocabulary(namespace="source_tokens"))
-    # print('vocab', vocab)
 
     model = build_model(vocab)
     model.cuda() if torch.cuda.is_available() else model
@@ -192,16 +201,19 @@ TEST_PATH = "./iwslt15/test"
 
 batch_size = 16
 embedding_dim = 256
-num_epoch = 200
-lr = 0.0003
+num_layers = 2
+dff = 1024
+num_head = 4
+num_epoch = 640
+lr = 0.000003
 # num_labels = 2
-grad_accum = 5
+grad_accum = 4
 weight_decay = 0.00001
 num_serialized_models_to_keep = 3
 grad_norm = 5.0
 patience = None
-max_len = 50
-warmup = 0
+max_len = 70
+warmup = 4000
 
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
