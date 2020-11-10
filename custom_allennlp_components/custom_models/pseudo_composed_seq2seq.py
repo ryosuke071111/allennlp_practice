@@ -52,7 +52,7 @@ class PseudoComposedSeq2Seq(Model):
         decoder: SeqDecoder,
         tied_source_embedder_key: Optional[str] = None,
         initializer: InitializerApplicator = InitializerApplicator(),
-        num_virtual_models: int = 0,
+        num_virtual_models: int = 9,
         **kwargs,
     ) -> None:
 
@@ -129,7 +129,7 @@ class PseudoComposedSeq2Seq(Model):
 
         state = self._encode(source_tokens)
 
-        ret = self._decoder(state, target_tokens)
+        ret = self._decoder(state, target_tokens, source_tokens)
 
         return ret
 

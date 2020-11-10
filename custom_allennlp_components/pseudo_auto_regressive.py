@@ -97,6 +97,7 @@ class PseudoAutoRegressiveSeqDecoder(SeqDecoder):
         beam_size: int = 4,
         tensor_based_metric: Metric = None,
         token_based_metric: Metric = None,
+        decoder_lin_emb: bool = False
     ) -> None:
         super().__init__(target_embedder)
 
@@ -143,8 +144,16 @@ class PseudoAutoRegressiveSeqDecoder(SeqDecoder):
         self._token_based_metric = token_based_metric
 
         self._scheduled_sampling_ratio = scheduled_sampling_ratio
+        self.num_virtual_models = num_virtual_models
 
-    def _forward_beam_search(self, state: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        self.orthogonal_embedding_emb = torch.nn.init.orthogonal_(torch.empty(self.num_virtual_models, target_embedder.get_output_dim(),requires_grad=False)).float()
+        
+        self.index_dict = {"[pseudo1]":0, "[pseudo2]":1, "[pseudo3]":2, "[pseudo4]":3, "[pseudo5]":4, "[pseudo6]":5, "[pseudo7]":6, "[pseudo8]":7, "[pseudo9]":8}
+        self.vocab = vocab
+        
+        self.decoder_lin_emb = decoder_lin_emb
+
+    def _forward_beam_search(self, state: Dict[str, torch.Tensor], index = None) -> Dict[str, torch.Tensor]:
         """
         Prepare inputs for the beam search, does beam search and returns beam search results.
         """
@@ -184,8 +193,8 @@ class PseudoAutoRegressiveSeqDecoder(SeqDecoder):
         new_output_projections = []
         new_states = []
 
-        for last_prediction, state in zip(start_predictions, states):
-            output_projections, state = self._prepare_output_projections(last_prediction, state)
+        for i, (last_prediction, state) in enumerate(zip(start_predictions, states)):
+            output_projections, state = self._prepare_output_projections(last_prediction, state, index = (index[i] if index is not None else index))
             new_output_projections.append(output_projections)
             new_states.append(state)
 
@@ -485,7 +494,7 @@ class PseudoAutoRegressiveSeqDecoder(SeqDecoder):
         return output_dict
 
     def _prepare_output_projections(
-        self, last_predictions: torch.Tensor, state: Dict[str, torch.Tensor]
+        self, last_predictions: torch.Tensor, state: Dict[str, torch.Tensor], index = None
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """
         Decode current state and last prediction to produce produce projections
@@ -510,6 +519,17 @@ class PseudoAutoRegressiveSeqDecoder(SeqDecoder):
         # last_predictions = last_predictions.unsqueeze(0)
         # last_predictions = last_predictions.unsqueeze(0).expand(self.beam_size*9, -1).reshape(1,-1)
         last_predictions_embeddings = self.target_embedder(last_predictions).unsqueeze(1)
+
+        if index is not None:
+            orthogonal_vecs = torch.index_select(self.orthogonal_embedding_emb.to(last_predictions_embeddings.device),0,index).unsqueeze(1)
+            bsz, seq_len, emb_dim = last_predictions_embeddings.size()
+            orthogonal_vecs = orthogonal_vecs.expand(-1, seq_len, -1)
+            
+            scale = 1
+
+            last_predictions_embeddings += (scale*orthogonal_vecs)
+
+
 
         if previous_steps_predictions is None or previous_steps_predictions.shape[-1] == 0:
             # There is no previous steps, except for start vectors in `last_predictions`
@@ -613,10 +633,24 @@ class PseudoAutoRegressiveSeqDecoder(SeqDecoder):
         self,
         encoder_out: Dict[str, torch.LongTensor],
         target_tokens: TextFieldTensors = None,
+        source_tokens: TextFieldTensors = None
     ) -> Dict[str, torch.Tensor]:
         state = encoder_out
         decoder_init_state = self._decoder_net.init_decoder_state(state)
         state.update(decoder_init_state)
+
+
+        if self.decoder_lin_emb:
+            try:
+                index = torch.tensor([self.index_dict[self.vocab.get_token_from_index(i, namespace = "source_tokens")] for \
+                    i in source_tokens["source_tokens"]["tokens"][:,1].squeeze(0).tolist()]).long().to(source_tokens["source_tokens"]["tokens"].device)
+            except:
+                import sys
+                sys.stdout.write("AAA {}".format(sys.exc_info()))
+                index = torch.tensor([self.index_dict[self.vocab.get_token_from_index(i,  namespace = "source_tokens")] for \
+                    i in source_tokens["source_tokens"]["tokens"][:,1].squeeze(0).tolist()]).long().to(source_tokens["source_tokens"]["tokens"].device)
+        
+
 
         if target_tokens:
             state_forward_loss = (
@@ -628,7 +662,10 @@ class PseudoAutoRegressiveSeqDecoder(SeqDecoder):
 
         if not self.training:
             #完成（出力の確率を平均化）
-            predictions = self._forward_beam_search(state)
+            if self.decoder_lin_emb:
+                predictions = self._forward_beam_search(state, index)
+            else:
+                predictions = self._forward_beam_search(state)
             output_dict.update(predictions)
 
             #target tokensを1つにする

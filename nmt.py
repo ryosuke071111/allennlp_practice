@@ -61,8 +61,12 @@ import random
 parser = argparse.ArgumentParser(description='Process some integers.')
 parser.add_argument('--pseudo', action="store_true", 
                             help='type pseudo, if you want to activate pseudo ensemble')
+parser.add_argument('--dec', action="store_true", 
+                            help='type pseudo, if you want to have decoder linear shift embedding')
 parser.add_argument('--seed', type=int, default = 42, 
                             help='type seed number')
+
+    
 args = parser.parse_args()
 
 seed = args.seed
@@ -132,7 +136,7 @@ def build_model(vocab: Vocabulary) -> Model:
         scheduled_sampling_ratio=0.0)
     
     if args.pseudo:
-        decoder = PseudoAutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu, scheduled_sampling_ratio=0.0)
+        decoder = PseudoAutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu, scheduled_sampling_ratio=0.0, decoder_lin_emb = args.dec)
         return PseudoComposedSeq2Seq(vocab, source_text_embedder, encoder, decoder, num_virtual_models = num_virtual_models)
     else:
         decoder = AutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu, scheduled_sampling_ratio=0.0)
@@ -218,7 +222,7 @@ warmup = 4000
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
-serialization_dir = "./checkpoints/nmt_lr_" + str(lr) + "_" + now
+serialization_dir = "./checkpoints/nmt_lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo")
 
 model, reader, trainer = run_training_loop()
 
