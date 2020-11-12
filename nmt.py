@@ -1,4 +1,3 @@
-#export CUDA_VISIBLE_DEVICES=1
 import tempfile
 from typing import Dict, Iterable, List, Tuple
 import os
@@ -36,7 +35,7 @@ from allennlp_models.generation.models import ComposedSeq2Seq
 from allennlp_models.generation.modules.decoder_nets import StackedSelfAttentionDecoderNet
 from allennlp_models.generation.modules.seq_decoders import AutoRegressiveSeqDecoder
 from allennlp.training.metrics import BLEU, Entropy
-from allennlp.training.learning_rate_schedulers import LinearWithWarmup
+from allennlp.training.learning_rate_schedulers import LinearWithWarmup, NoamLR
 from allennlp.training.learning_rate_schedulers.learning_rate_scheduler import ReduceOnPlateauLearningRateScheduler
 
 import torch.nn.functional as F
@@ -105,14 +104,19 @@ def read_data(reader: DatasetReader) -> Tuple[Iterable[Instance], Iterable[Insta
 
 def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
     print("Building the vocabulary")
-    ret = Vocabulary.from_instances(instances, min_count={'source_tokens': 3, 'target_tokens': 3})
-    print(ret.get_index_to_token_vocabulary(namespace = "source_tokens"))
-    print(ret.get_index_to_token_vocabulary(namespace = "target_tokens"))
+    # ret = Vocabulary.from_instances(instances, min_count={'source_tokens': 3, 'target_tokens': 3})
+    # print(ret.get_index_to_token_vocabulary(namespace = "source_tokens"))
+    # print(ret.get_index_to_token_vocabulary(namespace = "target_tokens"))
     # exit()
-    # ret = Vocabulary(padding_token = "<pad>", oov_token = "<unk>")
-    # # ret = ret.from_instances(instances)
-    # ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens", oov_token="<unk>")
-    # ret.set_from_file(filename="./iwslt15/vocab.vi",  namespace="target_tokens", oov_token="<unk>")
+    ret = Vocabulary()
+    # ret = ret.from_instances(instances)
+    ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens")
+    ret.set_from_file(filename="./iwslt15/vocab.vi",  namespace="target_tokens")
+
+    print("source vocab length", len(ret.get_index_to_token_vocabulary(namespace = "source_tokens")))
+    print("target vocab length", len(ret.get_index_to_token_vocabulary(namespace = "target_tokens")))
+    # exit()
+
     return ret
 
 def build_model(vocab: Vocabulary) -> Model:
@@ -149,8 +153,9 @@ def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.uti
 
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
     parameters = [[n,p] for n, p in model.named_parameters() if p.requires_grad]
-    optimizer = AdamOptimizer(parameters, lr=lr, weight_decay=weight_decay)
-    lr_scheduler = ReduceOnPlateauLearningRateScheduler(optimizer, factor = 0.8, patience = 3, min_lr = 0.000001)
+    optimizer = AdamOptimizer(parameters, lr=lr, weight_decay=weight_decay, betas=(0.9, 0.98), eps=1e-09)
+    lr_scheduler = NoamLR(optimizer, model_size = embedding_dim, warmup_steps = warmup)
+    # lr_scheduler = ReduceOnPlateauLearningRateScheduler(optimizer, factor = 0.8, patience = 3, min_lr = 0.000001, eps=1e-08)
     trainer = GradientDescentTrainer(
         model=model, 
         serialization_dir=serialization_dir, 
@@ -203,15 +208,15 @@ TEST_PATH = "./iwslt15/test"
 # TEST_PATH = "./data_small/small_japanese"
 
 
-batch_size = 16
+batch_size = 32
 embedding_dim = 256
 num_layers = 2
 dff = 1024
 num_head = 4
 num_epoch = 640
-lr = 0.000003
+lr = 1e-3
 # num_labels = 2
-grad_accum = 4
+grad_accum = 1
 weight_decay = 0.00001
 num_serialized_models_to_keep = 3
 grad_norm = 5.0
