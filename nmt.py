@@ -40,7 +40,7 @@ from allennlp.training.learning_rate_schedulers.learning_rate_scheduler import R
 
 import torch.nn.functional as F
 
-from ensemble import Ensemble
+# from ensemble import Ensemble
 
 import sys
 
@@ -53,6 +53,8 @@ from custom_allennlp_components.custom_dataset_reader.seq2seq_inflated import Ps
 from custom_allennlp_components.custom_models.pseudo_crf_tagger import PseudoCrfTagger
 from custom_allennlp_components.custom_models.pseudo_composed_seq2seq import PseudoComposedSeq2Seq
 from custom_allennlp_components.pseudo_auto_regressive import PseudoAutoRegressiveSeqDecoder
+from custom_allennlp_components.sentencepiece_tokenizer import SentencePieceTokenizer
+from custom_allennlp_components.inverse_with_warmup import InverseSquareRootLR
 
 import argparse
 import random
@@ -79,12 +81,12 @@ num_virtual_models = 9
 tags = ["[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]", "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]"][:num_virtual_models]
 
 def build_dataset_reader()  -> DatasetReader:
-    source_tokenizer = WhitespaceTokenizer()
-    target_tokenizer = WhitespaceTokenizer()
+    source_tokenizer = SentencePieceTokenizer("./iwslt14/spm_en.model")
+    target_tokenizer = SentencePieceTokenizer("./iwslt14/spm_de.model")
 
     # indexers = {"source_tokens":SingleIdTokenIndexer(), "target_tokens":SingleIdTokenIndexer()}
-    source_token_indexers = {"source_tokens":SingleIdTokenIndexer(namespace="source_tokens", lowercase_tokens=False)}
-    target_token_indexers = {"target_tokens":SingleIdTokenIndexer(namespace="target_tokens", lowercase_tokens=False)}
+    source_token_indexers = {"source_tokens":SingleIdTokenIndexer(namespace="source_tokens", lowercase_tokens=True)}
+    target_token_indexers = {"target_tokens":SingleIdTokenIndexer(namespace="target_tokens", lowercase_tokens=True)}
 
     return PseudoSeq2SeqDatasetReader(source_tokenizer=source_tokenizer, \
                                 target_tokenizer=target_tokenizer, \
@@ -110,8 +112,13 @@ def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
     # exit()
     ret = Vocabulary()
     # ret = ret.from_instances(instances)
-    ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens")
-    ret.set_from_file(filename="./iwslt15/vocab.vi",  namespace="target_tokens")
+    # ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens")
+    # ret.set_from_file(filename="./iwslt15/vocab.vi",  namespace="target_tokens")
+    ret.set_from_file(filename="./iwslt14/vocab.en",  namespace="source_tokens")
+    ret.set_from_file(filename="./iwslt14/vocab.de",  namespace="target_tokens")
+
+    # print(ret.get_index_to_token_vocabulary(namespace="source_tokens"))
+    # print(ret.get_index_to_token_vocabulary(namespace="target_tokens"))
 
     print("source vocab length", len(ret.get_index_to_token_vocabulary(namespace = "source_tokens")))
     print("target vocab length", len(ret.get_index_to_token_vocabulary(namespace = "target_tokens")))
@@ -119,25 +126,26 @@ def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
 
     return ret
 
-def build_model(vocab: Vocabulary) -> Model:
+def build_model(vocab: Vocabulary) -> Model: 
     print("Building the model")
     vocab_size_s = vocab.get_vocab_size("source_tokens")
-    vocab_size_t = vocab.get_vocab_size("target_tokens")
+    vocab_size_t = vocab.get_vocab_size("target_tokens") 
     
     bleu = BLEU(exclude_indices = {0,2,3})
 
     source_text_embedder = BasicTextFieldEmbedder({"source_tokens": Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_s)})
-    encoder = PytorchTransformer(input_dim=embedding_dim, num_layers=num_layers ,positional_encoding="sinusoidal", feedforward_hidden_dim=dff, num_attention_heads=num_head)
+    encoder = PytorchTransformer(input_dim=embedding_dim, num_layers=num_layers ,positional_encoding="sinusoidal", 
+                            feedforward_hidden_dim=dff, num_attention_heads=num_head, positional_embedding_size = embedding_dim, dropout_prob = dropout)
 
     
     # target_text_embedder = BasicTextFieldEmbedder({"target_tokens":Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_t)})
     target_text_embedder = Embedding(embedding_dim=embedding_dim, num_embeddings=vocab_size_t)
-    decoder_net = StackedSelfAttentionDecoderNet(decoding_dim=embedding_dim, target_embedding_dim=embedding_dim, feedforward_hidden_dim=dff, num_layers=num_layers, num_attention_heads=num_head)
+    decoder_net = StackedSelfAttentionDecoderNet(decoding_dim=embedding_dim, target_embedding_dim=embedding_dim, 
+                                feedforward_hidden_dim=dff, num_layers=num_layers, num_attention_heads=num_head, dropout_prob = dropout)
     decoder_net.decodes_parallel=True
     decoder = AutoRegressiveSeqDecoder(
         vocab, decoder_net, max_len, target_text_embedder, 
-        target_namespace="target_tokens", tensor_based_metric=bleu, 
-        scheduled_sampling_ratio=0.0)
+        target_namespace="target_tokens", tensor_based_metric=bleu, scheduled_sampling_ratio=0.0)
     
     if args.pseudo:
         decoder = PseudoAutoRegressiveSeqDecoder(vocab, decoder_net, max_len, target_text_embedder, target_namespace="target_tokens", tensor_based_metric=bleu, scheduled_sampling_ratio=0.0, decoder_lin_emb = args.dec)
@@ -154,7 +162,8 @@ def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.uti
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
     parameters = [[n,p] for n, p in model.named_parameters() if p.requires_grad]
     optimizer = AdamOptimizer(parameters, lr=lr, weight_decay=weight_decay, betas=(0.9, 0.98), eps=1e-09)
-    lr_scheduler = NoamLR(optimizer, model_size = embedding_dim, warmup_steps = warmup)
+    # lr_scheduler = NoamLR(optimizer, model_size = embedding_dim, warmup_steps = warmup)
+    lr_scheduler = InverseSquareRootLR(optimizer, warmup_steps = warmup)
     # lr_scheduler = ReduceOnPlateauLearningRateScheduler(optimizer, factor = 0.8, patience = 3, min_lr = 0.000001, eps=1e-08)
     trainer = GradientDescentTrainer(
         model=model, 
@@ -199,9 +208,9 @@ TRAIN_PATH = cur_dir + "/wmt/train"
 DEV_PATH = cur_dir + "/wmt/test"
 TEST_PATH = cur_dir + "/wmt/test"
 
-TRAIN_PATH = "./iwslt15/train"
-DEV_PATH = "./iwslt15/valid"
-TEST_PATH = "./iwslt15/test"
+TRAIN_PATH = "./iwslt14/train"
+DEV_PATH = "./iwslt14/valid_small"
+TEST_PATH = "./iwslt14/test"
 
 # TRAIN_PATH = "./data_small/small_japanese"
 # DEV_PATH = "./data_small/small_japanese"
@@ -210,14 +219,15 @@ TEST_PATH = "./iwslt15/test"
 
 batch_size = 32
 embedding_dim = 256
-num_layers = 2
+num_layers = 6
 dff = 1024
 num_head = 4
-num_epoch = 75
-lr = 1e-3
+num_epoch = 100
+lr = 5e-4
 # num_labels = 2
+dropout = 0.3
 grad_accum = 1
-weight_decay = 0.00001
+weight_decay = 0.0001
 num_serialized_models_to_keep = 3
 grad_norm = 5.0
 patience = None
@@ -227,7 +237,8 @@ warmup = 4000
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
-serialization_dir = "./checkpoints/nmt_lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo")
+special = "_iwslt14"
+serialization_dir = "./checkpoints/nmt_lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo") + special
 
 model, reader, trainer = run_training_loop()
 

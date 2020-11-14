@@ -13,6 +13,7 @@ from allennlp.data.fields import TextField
 from allennlp.data.instance import Instance
 from allennlp.data.tokenizers import Tokenizer, SpacyTokenizer
 from allennlp.data.token_indexers import TokenIndexer, SingleIdTokenIndexer
+from allennlp.data.tokenizers.token import Token
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +87,12 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
         self._source_add_end_token = source_add_end_token
         self._target_add_start_token = target_add_start_token
         self._target_add_end_token = target_add_end_token
-        self._start_token, self._end_token = self._source_tokenizer.tokenize(
-            start_symbol + " " + end_symbol
-        )
+        self._start_token = "@@start@@"
+        self._end_token = "@@end@@"
+        # self._source_tokenizer.tokenize(
+        #     start_symbol + " " + end_symbol
+        # )
+        self._70 = 0
         self._delimiter = delimiter
         self._source_max_tokens = source_max_tokens
         self._target_max_tokens = target_max_tokens
@@ -96,6 +100,7 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
         self._target_max_exceeded = 0
         self.quoting = quoting
         self.pseudo = pseudo
+        self.tags = ["[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]", "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]"][:num_virtual_models]
 
     @overrides
     def _read(self, file_path: str, bagging = False):
@@ -125,19 +130,21 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
                     raise ConfigurationError(
                         "Invalid line format: %s (line number %d)" % (row, line_num + 1)
                     )
-
                 source_sequence, target_sequence = row
                 if len(source_sequence) == 0 or len(target_sequence) == 0:
                     continue
 
                 if self.pseudo:
                     for i in range(len(pseudo_tags)):
-                        pseudo_source_sequence = pseudo_tags[i] + " " + source_sequence
+                        # pseudo_source_sequence = pseudo_tags[i] + " " + source_sequence
                         # pseudo_target_sequence = pseudo_tags[i] + " " + target_sequence
+                        pseudo_source_sequence = source_sequence
                         pseudo_target_sequence = target_sequence
-                        ret.append(self.text_to_instance(pseudo_source_sequence, pseudo_target_sequence))
+                        ret.append(self.text_to_instance(pseudo_source_sequence, pseudo_target_sequence, v_i=i))
                 else:
                     ret.append(self.text_to_instance(source_sequence, target_sequence))
+            
+            print(f"num of longer than maximux length {self._70}")
 
 
         if self._source_max_tokens and self._source_max_exceeded:
@@ -157,16 +164,23 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
 
     @overrides
     def text_to_instance(
-        self, source_string: str, target_string: str = None
+        self, source_string: str, target_string: str = None, v_i = None,
     ) -> Instance:  # type: ignore
         tokenized_source = self._source_tokenizer.tokenize(source_string)
         if self._source_max_tokens and len(tokenized_source) > self._source_max_tokens:
             self._source_max_exceeded += 1
             tokenized_source = tokenized_source[: self._source_max_tokens]
+        
+        if self.pseudo:
+            # tokenized_source = [Token(self.tags[v_i])] + tokenized_source
+            tokenized_source.insert(0, Token(copy.deepcopy(self.tags[v_i])))
+
         if self._source_add_start_token:
-            tokenized_source.insert(0, copy.deepcopy(self._start_token))
+            tokenized_source.insert(0, Token(copy.deepcopy(self._start_token)))
         if self._source_add_end_token:
-            tokenized_source.append(copy.deepcopy(self._end_token))
+            tokenized_source.append(Token(copy.deepcopy(self._end_token)))
+        
+        self._70 += len(tokenized_source) >= 70
         source_field = TextField(tokenized_source, self._source_token_indexers)
         if target_string is not None:
             tokenized_target = self._target_tokenizer.tokenize(target_string)
@@ -174,9 +188,9 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
                 self._target_max_exceeded += 1
                 tokenized_target = tokenized_target[: self._target_max_tokens]
             if self._target_add_start_token:
-                tokenized_target.insert(0, copy.deepcopy(self._start_token))
+                tokenized_target.insert(0, Token(copy.deepcopy(self._start_token)))
             if self._target_add_end_token:
-                tokenized_target.append(copy.deepcopy(self._end_token))
+                tokenized_target.append(Token(copy.deepcopy(self._end_token)))
             target_field = TextField(tokenized_target, self._target_token_indexers)
             return Instance({"source_tokens": source_field, "target_tokens": target_field})
         else:
