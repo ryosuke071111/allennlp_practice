@@ -29,9 +29,15 @@ class InverseSquareRootLR(LearningRateScheduler):
         warmup_steps: int,
         factor: float = 1.0,
         last_epoch: int = -1,
+        init_lr = 0,
+        end_lr = 5e-4,
     ) -> None:
         self.warmup_steps = warmup_steps
         self.factor = factor
+        self.init_lr = 0
+        self.end_lr = end_lr
+        self.lr_step = (self.end_lr - self.init_lr)/self.warmup_steps
+        self.decay_factor = self.end_lr * self.warmup_steps ** 0.5
         super().__init__(optimizer, last_epoch=last_epoch)
 
     @overrides
@@ -48,6 +54,12 @@ class InverseSquareRootLR(LearningRateScheduler):
 
     def get_values(self):
         step = max(self.last_epoch, 1)
-        scale = step ** (-0.5)
+        
+        if step < self.warmup_steps:
+            scale = self.init_lr + step * self.lr_step
+        else:
+            scale = self.decay_factor *  step ** (-0.5)
+
+        # print(f"scare: {around(scale, 6)}")
 
         return [scale for _ in range(len(self.base_values))]

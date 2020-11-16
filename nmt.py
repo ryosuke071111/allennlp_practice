@@ -84,6 +84,9 @@ def build_dataset_reader()  -> DatasetReader:
     source_tokenizer = SentencePieceTokenizer("./iwslt14/spm_en.model")
     target_tokenizer = SentencePieceTokenizer("./iwslt14/spm_de.model")
 
+    # source_tokenizer = WhitespaceTokenizer()
+    # target_tokenizer = WhitespaceTokenizer()
+
     # indexers = {"source_tokens":SingleIdTokenIndexer(), "target_tokens":SingleIdTokenIndexer()}
     source_token_indexers = {"source_tokens":SingleIdTokenIndexer(namespace="source_tokens", lowercase_tokens=True)}
     target_token_indexers = {"target_tokens":SingleIdTokenIndexer(namespace="target_tokens", lowercase_tokens=True)}
@@ -113,15 +116,15 @@ def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
     ret = Vocabulary()
     # ret = ret.from_instances(instances)
     # ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens")
-    # ret.set_from_file(filename="./iwslt15/vocab.vi",  namespace="target_tokens")
+    # ret.set_from_file(filename="./iwslt15/vocab.vi",  namespacde="target_tokens")
     ret.set_from_file(filename="./iwslt14/vocab.en",  namespace="source_tokens")
     ret.set_from_file(filename="./iwslt14/vocab.de",  namespace="target_tokens")
 
     # print(ret.get_index_to_token_vocabulary(namespace="source_tokens"))
     # print(ret.get_index_to_token_vocabulary(namespace="target_tokens"))
 
-    print("source vocab length", len(ret.get_index_to_token_vocabulary(namespace = "source_tokens")))
-    print("target vocab length", len(ret.get_index_to_token_vocabulary(namespace = "target_tokens")))
+    # print("source vocab length", len(ret.get_index_to_token_vocabulary(namespace = "source_tokens")))
+    # print("target vocab length", len(ret.get_index_to_token_vocabulary(namespace = "target_tokens")))
     # exit()
 
     return ret
@@ -162,8 +165,8 @@ def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.uti
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
     parameters = [[n,p] for n, p in model.named_parameters() if p.requires_grad]
     optimizer = AdamOptimizer(parameters, lr=lr, weight_decay=weight_decay, betas=(0.9, 0.98), eps=1e-09)
-    # lr_scheduler = NoamLR(optimizer, model_size = embedding_dim, warmup_steps = warmup)
-    lr_scheduler = InverseSquareRootLR(optimizer, warmup_steps = warmup)
+    #lr_scheduler = NoamLR(optimizer, model_size = embedding_dim, warmup_steps = warmup)
+    lr_scheduler = InverseSquareRootLR(optimizer, warmup_steps = warmup, end_lr = lr)
     # lr_scheduler = ReduceOnPlateauLearningRateScheduler(optimizer, factor = 0.8, patience = 3, min_lr = 0.000001, eps=1e-08)
     trainer = GradientDescentTrainer(
         model=model, 
@@ -187,6 +190,9 @@ def run_training_loop():
 
     vocab = build_vocab(train_data + dev_data)
 
+    print(vocab.get_token_to_index_vocabulary(namespace = "source_tokens"))
+    print(vocab.get_token_to_index_vocabulary(namespace = "target_tokens"))
+
     model = build_model(vocab)
     model.cuda() if torch.cuda.is_available() else model
 
@@ -204,9 +210,6 @@ def run_training_loop():
     return model, dataset_reader, trainer
 
 cur_dir = os.getcwd()
-TRAIN_PATH = cur_dir + "/wmt/train"
-DEV_PATH = cur_dir + "/wmt/test"
-TEST_PATH = cur_dir + "/wmt/test"
 
 TRAIN_PATH = "./iwslt14/train"
 DEV_PATH = "./iwslt14/valid_small"
@@ -237,7 +240,7 @@ warmup = 4000
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
-special = "_iwslt14"
+special = "_iwslt14_squareinverse_whitespace"
 serialization_dir = "./checkpoints/nmt_lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo") + special
 
 model, reader, trainer = run_training_loop()

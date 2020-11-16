@@ -127,6 +127,8 @@ class PseudoComposedSeq2Seq(Model):
             The output tensors from the decoder.
         """
 
+
+
         state = self._encode(source_tokens)
 
         ret = self._decoder(state, target_tokens, source_tokens)

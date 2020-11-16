@@ -87,8 +87,8 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
         self._source_add_end_token = source_add_end_token
         self._target_add_start_token = target_add_start_token
         self._target_add_end_token = target_add_end_token
-        self._start_token = "@@start@@"
-        self._end_token = "@@end@@"
+        self._start_token = "@start@"
+        self._end_token = "@end@"
         # self._source_tokenizer.tokenize(
         #     start_symbol + " " + end_symbol
         # )
@@ -167,6 +167,7 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
         self, source_string: str, target_string: str = None, v_i = None,
     ) -> Instance:  # type: ignore
         tokenized_source = self._source_tokenizer.tokenize(source_string)
+   
         if self._source_max_tokens and len(tokenized_source) > self._source_max_tokens:
             self._source_max_exceeded += 1
             tokenized_source = tokenized_source[: self._source_max_tokens]
@@ -183,7 +184,9 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
         self._70 += len(tokenized_source) >= 70
         source_field = TextField(tokenized_source, self._source_token_indexers)
         if target_string is not None:
+            
             tokenized_target = self._target_tokenizer.tokenize(target_string)
+ 
             if self._target_max_tokens and len(tokenized_target) > self._target_max_tokens:
                 self._target_max_exceeded += 1
                 tokenized_target = tokenized_target[: self._target_max_tokens]

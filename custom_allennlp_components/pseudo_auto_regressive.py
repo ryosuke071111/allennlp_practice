@@ -486,6 +486,7 @@ class PseudoAutoRegressiveSeqDecoder(SeqDecoder):
         target_mask = util.get_text_field_mask(target_tokens)
         loss = self._get_loss(logits, targets, target_mask)
 
+
         # TODO: We will be using beam search to get predictions for validation, but if beam size in 1
         # we could consider taking the last_predictions here and building step_predictions
         # and use that instead of running beam search again, if performance in validation is taking a hit
