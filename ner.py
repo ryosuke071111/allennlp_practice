@@ -32,8 +32,8 @@ from transformers import BertTokenizer
 from allennlp_models.tagging.models import CrfTagger
 
 cur_dir = os.getcwd()
-sys.path.append(os.path.join(os.path.dirname(__file__), cur_dir + '/custom_allennlp_components'))
-sys.path.append(os.path.join(os.path.dirname(__file__), cur_dir +  "/custom_allennlp_components/custom_dataset_reader"))
+sys.path.append(os.path.join(os.path.dirname(__file__), cur_dir + f'{cur_dir}/custom_allennlp_components'))
+sys.path.append(os.path.join(os.path.dirname(__file__), cur_dir +  f"{cur_dir}/custom_allennlp_components/custom_dataset_reader"))
 
 import pprint
 # pprint.pprint(sys.path)
@@ -97,7 +97,7 @@ def build_model(vocab: Vocabulary) -> Model:
     vocab_size_tokens = vocab.get_vocab_size("tokens")
     vocab_size_chars = vocab.get_vocab_size("token_characters")
 
-    embedder = BasicTextFieldEmbedder({"tokens": Embedding(embedding_dim=embedding_dim, pretrained_file="./glove/glove.6B.200d.txt", trainable=False, num_embeddings=vocab_size_tokens, vocab=vocab),\
+    embedder = BasicTextFieldEmbedder({"tokens": Embedding(embedding_dim=embedding_dim, pretrained_file=f"{cur_dir}/glove/glove.6B.200d.txt", trainable=False, num_embeddings=vocab_size_tokens, vocab=vocab),\
                                         "elmo": ElmoTokenEmbedder(weight_file="https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5", options_file = "https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json", do_layer_norm=False, dropout=0.0),\
                                         "token_characters":TokenCharactersEncoder(embedding=Embedding(embedding_dim=16, num_embeddings=vocab_size_chars, vocab=vocab), \
                                                                                 encoder=CnnEncoder(embedding_dim=16, num_filters=128, ngram_filter_sizes=[3]))})
@@ -143,14 +143,6 @@ def run_training_loop():
 
     vocab = build_vocab(train_data + dev_data)
 
-    # if using pseudo-tags
-    # vocab = add_pseudo_tags_to_vocab(vocab, tags)
-
-    # for namespace in vocab.get_namespaces():
-    #     print(vocab.get_index_to_token_vocabulary(namespace))
-
-
-
     model = build_model(vocab)
     model.cuda() if torch.cuda.is_available() else model
 
@@ -172,9 +164,9 @@ def run_training_loop():
 # TEST_PATH = "/home/ryosuke/desktop/allen_practice/conll2003/eng.testb"
 
 cur_dir = os.getcwd()
-TRAIN_PATH =  "./conll2003/eng.train"
-DEV_PATH =  "./conll2003/eng.testb"
-TEST_PATH =  "./conll2003/eng.testb"
+TRAIN_PATH =  f"{cur_dir}/conll2003/eng.train"
+DEV_PATH =  f"{cur_dir}/conll2003/eng.testb"
+TEST_PATH =  f"{cur_dir}/conll2003/eng.testb"
 
 batch_size = 2
 embedding_dim = 200
@@ -191,7 +183,7 @@ patience = 25
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
-serialization_dir = "/home/ryosuke/desktop/allen_practice/checkpoints_ner/lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo")
+serialization_dir = f"{cur_dir}/checkpoints_ner/lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo")
 vocab_dir = serialization_dir + "/vocab"
 
 model, dataset_reader = run_training_loop()

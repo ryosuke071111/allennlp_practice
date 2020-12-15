@@ -1,3 +1,4 @@
+
 from overrides import overrides
 import torch
 
@@ -37,7 +38,8 @@ class InverseSquareRootLR(LearningRateScheduler):
         self.init_lr = 0
         self.end_lr = end_lr
         self.lr_step = (self.end_lr - self.init_lr)/self.warmup_steps
-        self.decay_factor = self.end_lr * self.warmup_steps ** 0.5
+        # self.decay_factor = self.end_lr * self.warmup_steps ** 0.5
+        self.decay_factor = 1
         super().__init__(optimizer, last_epoch=last_epoch)
 
     @overrides

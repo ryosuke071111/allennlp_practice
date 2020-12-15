@@ -165,7 +165,8 @@ class PseudoComposedSeq2Seq(Model):
 
         # print(self.vocab.get_index_to_token_vocabulary(namespace = "source_tokens"))
         # exit()
-
+        
+        print("sour",source_tokens)
         try:
             # print("tokens", tokens["tokens"])
             index = torch.tensor([self.index_dict[self.vocab.get_token_from_index(i, namespace = "source_tokens")] for i in source_tokens["source_tokens"]["tokens"][:,1].squeeze(0).tolist()]).long().to(source_tokens["source_tokens"]["tokens"].device)

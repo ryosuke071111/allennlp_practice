@@ -101,6 +101,9 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
         self.quoting = quoting
         self.pseudo = pseudo
         self.tags = ["[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]", "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]"][:num_virtual_models]
+        self.s_dic = {}
+        self.t_dic = {}
+        
 
     @overrides
     def _read(self, file_path: str, bagging = False):
@@ -160,6 +163,7 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
                 self._target_max_tokens,
             )
         
+        
         return AllennlpDataset(ret)
 
     @overrides
@@ -176,12 +180,17 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
             # tokenized_source = [Token(self.tags[v_i])] + tokenized_source
             tokenized_source.insert(0, Token(copy.deepcopy(self.tags[v_i])))
 
+
         if self._source_add_start_token:
             tokenized_source.insert(0, Token(copy.deepcopy(self._start_token)))
         if self._source_add_end_token:
             tokenized_source.append(Token(copy.deepcopy(self._end_token)))
         
         self._70 += len(tokenized_source) >= 70
+
+        l_s = len(tokenized_source)//20*20
+        self.s_dic[l_s] = self.s_dic.get(l_s, 0) + 1
+
         source_field = TextField(tokenized_source, self._source_token_indexers)
         if target_string is not None:
             
@@ -195,6 +204,9 @@ class PseudoSeq2SeqDatasetReader(DatasetReader):
             if self._target_add_end_token:
                 tokenized_target.append(Token(copy.deepcopy(self._end_token)))
             target_field = TextField(tokenized_target, self._target_token_indexers)
+            l_t = len(tokenized_target)//20*20
+            self.t_dic[l_t] = self.t_dic.get(l_t, 0) + 1
+
             return Instance({"source_tokens": source_field, "target_tokens": target_field})
         else:
             return Instance({"source_tokens": source_field})

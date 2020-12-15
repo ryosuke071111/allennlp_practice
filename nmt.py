@@ -45,8 +45,8 @@ import torch.nn.functional as F
 import sys
 
 cur_dir = os.getcwd()
-sys.path.append(os.path.join(os.path.dirname(__file__), cur_dir + '/custom_allennlp_components'))
-sys.path.append(os.path.join(os.path.dirname(__file__), cur_dir +  "/custom_allennlp_components/custom_dataset_reader"))
+sys.path.append(os.path.join(os.path.dirname(__file__), f'{cur_dir}/custom_allennlp_components'))
+sys.path.append(os.path.join(os.path.dirname(__file__),  f"{cur_dir}/custom_allennlp_components/custom_dataset_reader"))
 
 from custom_allennlp_components.custom_dataset_reader.conll2003_inflated import Conll2003DatasetReader
 from custom_allennlp_components.custom_dataset_reader.seq2seq_inflated import PseudoSeq2SeqDatasetReader
@@ -81,8 +81,8 @@ num_virtual_models = 9
 tags = ["[pseudo1]","[pseudo2]","[pseudo3]","[pseudo4]","[pseudo5]", "[pseudo6]","[pseudo7]","[pseudo8]","[pseudo9]"][:num_virtual_models]
 
 def build_dataset_reader()  -> DatasetReader:
-    source_tokenizer = SentencePieceTokenizer("./iwslt14/spm_en.model")
-    target_tokenizer = SentencePieceTokenizer("./iwslt14/spm_de.model")
+    source_tokenizer = SentencePieceTokenizer(f"{cur_dir}/iwslt14/spm_en.model")
+    target_tokenizer = SentencePieceTokenizer(f"{cur_dir}/iwslt14/spm_de.model")
 
     # source_tokenizer = WhitespaceTokenizer()
     # target_tokenizer = WhitespaceTokenizer()
@@ -109,23 +109,11 @@ def read_data(reader: DatasetReader) -> Tuple[Iterable[Instance], Iterable[Insta
 
 def build_vocab(instances: Iterable[Instance]) -> Vocabulary:
     print("Building the vocabulary")
-    # ret = Vocabulary.from_instances(instances, min_count={'source_tokens': 3, 'target_tokens': 3})
-    # print(ret.get_index_to_token_vocabulary(namespace = "source_tokens"))
-    # print(ret.get_index_to_token_vocabulary(namespace = "target_tokens"))
-    # exit()
+
     ret = Vocabulary()
-    # ret = ret.from_instances(instances)
-    # ret.set_from_file(filename="./iwslt15/vocab.en",  namespace="source_tokens")
-    # ret.set_from_file(filename="./iwslt15/vocab.vi",  namespacde="target_tokens")
-    ret.set_from_file(filename="./iwslt14/vocab.en",  namespace="source_tokens")
-    ret.set_from_file(filename="./iwslt14/vocab.de",  namespace="target_tokens")
 
-    # print(ret.get_index_to_token_vocabulary(namespace="source_tokens"))
-    # print(ret.get_index_to_token_vocabulary(namespace="target_tokens"))
-
-    # print("source vocab length", len(ret.get_index_to_token_vocabulary(namespace = "source_tokens")))
-    # print("target vocab length", len(ret.get_index_to_token_vocabulary(namespace = "target_tokens")))
-    # exit()
+    ret.set_from_file(filename=f"{cur_dir}/iwslt14/vocab.en",  namespace="source_tokens")
+    ret.set_from_file(filename=f"{cur_dir}/iwslt14/vocab.de",  namespace="target_tokens")
 
     return ret
 
@@ -165,8 +153,8 @@ def build_data_loaders(train_data: torch.utils.data.Dataset, dev_data: torch.uti
 def build_trainer(model: Model, serialization_dir:str, train_loader: PyTorchDataLoader, dev_loader: PyTorchDataLoader) -> Trainer:
     parameters = [[n,p] for n, p in model.named_parameters() if p.requires_grad]
     optimizer = AdamOptimizer(parameters, lr=lr, weight_decay=weight_decay, betas=(0.9, 0.98), eps=1e-09)
-    #lr_scheduler = NoamLR(optimizer, model_size = embedding_dim, warmup_steps = warmup)
-    lr_scheduler = InverseSquareRootLR(optimizer, warmup_steps = warmup, end_lr = lr)
+    lr_scheduler = NoamLR(optimizer, model_size = embedding_dim, warmup_steps = warmup)
+    # lr_scheduler = InverseSquareRootLR(optimizer, warmup_steps = warmup, end_lr = lr)
     # lr_scheduler = ReduceOnPlateauLearningRateScheduler(optimizer, factor = 0.8, patience = 3, min_lr = 0.000001, eps=1e-08)
     trainer = GradientDescentTrainer(
         model=model, 
@@ -211,28 +199,28 @@ def run_training_loop():
 
 cur_dir = os.getcwd()
 
-TRAIN_PATH = "./iwslt14/train"
-DEV_PATH = "./iwslt14/valid_small"
-TEST_PATH = "./iwslt14/test"
+TRAIN_PATH = f"{cur_dir}/iwslt14/train"
+DEV_PATH = f"{cur_dir}/iwslt14/valid_small"
+TEST_PATH = f"{cur_dir}/iwslt14/test"
 
 # TRAIN_PATH = "./data_small/small_japanese"
 # DEV_PATH = "./data_small/small_japanese"
 # TEST_PATH = "./data_small/small_japanese"
 
 
-batch_size = 32
+batch_size = 100
 embedding_dim = 256
 num_layers = 6
 dff = 1024
 num_head = 4
-num_epoch = 100
+num_epoch = 400
 lr = 5e-4
 # num_labels = 2
 dropout = 0.3
 grad_accum = 1
 weight_decay = 0.0001
 num_serialized_models_to_keep = 3
-grad_norm = 5.0
+grad_norm = None
 patience = None
 max_len = 70
 warmup = 4000
@@ -240,45 +228,8 @@ warmup = 4000
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
-special = "_iwslt14_squareinverse_whitespace"
-serialization_dir = "./checkpoints/nmt_lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo") + special
+special = f"_noam_batch{batch_size*grad_accum}_emb{embedding_dim}"
+serialization_dir = f"{cur_dir}/checkpoints/nmt_lr_{str(lr)}_{now}_seed{str(seed)}_{("single" if not args.pseudo else "pseudo")}{special}"
 
 model, reader, trainer = run_training_loop()
 
-# dataset_reader = build_dataset_reader()
-# train_data, dev_data = read_data(dataset_reader)
-# train_loader, dev_loader = build_data_loaders(train_data, dev_data)
-# vocab = build_vocab(train_data + dev_data)
-# train_data.index_with(vocab)
-# dev_data.index_with(vocab)
-
-
-# model1.cuda() if torch.cuda.is_available() else model1
-
-
-# model2.cuda() if torch.cuda.is_available() else model2
-
-# model1 = build_model(vocab)
-# model2 = build_model(vocab)
-# models = [model1, model2]
-# ensemble = Ensemble(models)
-# for data in train_loader:
-#     # data.to("cuda")
-#     print(ensemble(data["source_tokens"], data["target_tokens"]))
-
-
-
-
-
-
-# test_data = dataset_reader.read(TEST_PATH)
-# test_data.index_with(model.vocab)
-# data_loader = PyTorchDataLoader(test_data, batch_size=32)
-
-
-# results = evaluate(model, data_loader, cuda_device=0)
-# print(results)
-# print("batch_size:{}, num_epoch:{}, lr:{}, grad_accum:{}".format(batch_size, num_epoch, lr, grad_accum))
-
-
-#----------------------------------------------------------------------

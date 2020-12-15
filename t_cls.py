@@ -3,7 +3,7 @@ from typing import Dict, Iterable, List, Tuple
 import os
 import sys
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '/home/ryosuke/desktop/allen_practice/custom_allennlp_components'))
+sys.path.append(os.path.join(os.path.dirname(__file__), f'{cur_dir}/custom_allennlp_components'))
 
 import allennlp
 import torch
@@ -155,9 +155,6 @@ class SimpleClassifier(Model):
         if self.pseudo:
             offset = 30522
             vector_ids = text["tokens"]["tokens"][:, 1] - offset
-            print(text["tokens"]["tokens"][:,1])
-            # print(text["tokens"]["tokens"][:,1] -offset)
-            # exit()
             vector_ids = text["tokens"]["tokens"][:, 1] - offset
             vectors = torch.index_select(self.vectors.to(device) , 0, vector_ids).to(device).unsqueeze(1)
             embedded_text += vectors
@@ -302,7 +299,7 @@ grad_accum = 8
 import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
-serialization_dir = "/home/ryosuke/desktop/allen_practice/checkpoints_clss/lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo")
+serialization_dir = f"{cur_dir}/checkpoints_clss/lr_" + str(lr) + "_" + now + "_seed" + str(seed) + "_" + ("single" if not args.pseudo else "pseudo")
 vocab_dir = serialization_dir + "/vocab"
 
 model, dataset_reader = run_training_loop()
@@ -314,14 +311,3 @@ data_loader = PyTorchDataLoader(test_data, batch_size=batch_size, shuffle=False)
 results = evaluate(model, data_loader, cuda_device=0)
 print(results)
 print("batch_size:{}, num_epoch:{}, lr:{}, grad_accum:{}".format(batch_size, num_epoch, lr, grad_accum))
-
-# vocab = model.vocab
-# predictor = SentenceClassifierPredictor(model, dataset_reader)
-
-# output = predictor.predict('A good movie!')
-# print([(vocab.get_token_from_index(label_id, 'labels'), prob)
-#        for label_id, prob in enumerate(output['probs'])])
-# output = predictor.predict('This was a monstrous waste of time.')
-# print([(vocab.get_token_from_index(label_id, 'labels'), prob)
-#        for label_id, prob in enumerate(output['probs'])])transformers
-
