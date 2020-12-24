@@ -44,7 +44,8 @@ import torch.nn.functional as F
 
 import sys
 
-cur_dir = os.getcwd()
+# cur_dir = os.getcwd()
+cur_dir = "/home/acb11356ts/desktop/allennlp_practice"
 sys.path.append(os.path.join(os.path.dirname(__file__), f'{cur_dir}/custom_allennlp_components'))
 sys.path.append(os.path.join(os.path.dirname(__file__),  f"{cur_dir}/custom_allennlp_components/custom_dataset_reader"))
 
@@ -197,7 +198,7 @@ def run_training_loop():
 
     return model, dataset_reader, trainer
 
-cur_dir = os.getcwd()
+# cur_dir = os.getcwd()
 
 TRAIN_PATH = f"{cur_dir}/iwslt14/train"
 DEV_PATH = f"{cur_dir}/iwslt14/valid_small"
@@ -213,7 +214,7 @@ embedding_dim = 256
 num_layers = 6
 dff = 1024
 num_head = 4
-num_epoch = 400
+num_epoch = 600
 lr = 5e-4
 # num_labels = 2
 dropout = 0.3
@@ -229,7 +230,8 @@ import datetime
 now = "{0:%Y%m%d_%H%M%S}".format(datetime.datetime.now())
 
 special = f"_noam_batch{batch_size*grad_accum}_emb{embedding_dim}"
-serialization_dir = f"{cur_dir}/checkpoints/nmt_lr_{str(lr)}_{now}_seed{str(seed)}_{("single" if not args.pseudo else "pseudo")}{special}"
+pseudo = "single" if not args.pseudo else "pseudo"
+serialization_dir = f"{cur_dir}/checkpoints/nmt_lr_{str(lr)}_{now}_seed{str(seed)}_{pseudo}{special}"
 
 model, reader, trainer = run_training_loop()
 
